@@ -1,0 +1,263 @@
+#!/usr/bin/perl -w
+# $Id: archive_check,v 1.10 2007/09/26 19:40:41 pchines Exp $
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use File::Find;
+use File::Spec;
+use GTB::File qw(Open);
+our %Opt;
+our %Stats;
+our %User;      # map UIDs to usernames
+our %Group;     # map GIDs to group names
+our $AbsDir;    # top-level directory
+our $SymLinkFh; # file for symlink output
+our $DirPermFh; # file for directory permissions
+our $InfoFh;    # file for other output
+
+our $EMPTY = q{};
+our $RECENT = 60 * 60 * 24 * 30;    # one month
+
+=head1 NAME
+
+archive_check - check directories to be archived
+
+=head1 SYNOPSIS
+
+Test specified directory tree for external symlinks and other issues, prior
+to archiving data to tape:
+
+  archive_check [options] DIR
+
+For complete documentation, run C<archive_check -man>
+
+=head1 DESCRIPTION
+
+Check directories to be archived for potential problems, including:
+
+ - external symlinks
+ - broken symlinks
+ - recently accessed/changed files
+
+Also reports total size and file owners, for planning and confirmation.
+
+=cut
+
+#------------
+# Begin MAIN 
+#------------
+
+process_commandline();
+if ($Opt{output}) {
+    $SymLinkFh = Open("$Opt{output}.link.txt", 'w');
+    $DirPermFh = Open("$Opt{output}.dirs.txt", 'w');
+    $InfoFh    = Open("$Opt{output}.info.txt", 'w');
+}
+for my $dir (@ARGV) {
+    # clear data structures
+    for my $i (qw(last_atime last_mtime dead_links external_links total_size)) {
+        $Stats{$i} = 0;
+    }
+    %User = ();
+    %Group = ();
+    # evaluate each directory
+    $AbsDir = File::Spec->rel2abs($dir);
+    if (!$Opt{output}) {
+        my ($v,$p,$d) = File::Spec->splitpath($AbsDir);
+        $SymLinkFh = Open("$d.link.txt", 'w');
+        $DirPermFh = Open("$d.dirs.txt", 'w');
+        $InfoFh    = Open("$d.info.txt", 'w');
+    }
+    find(\&check, $AbsDir);
+    report_info();
+}
+warn "Grand total: ", human_readable($Stats{"grand_total"}), "\n";
+for my $w (sort keys %{ $Stats{"warnings"} }) {
+    warn "$w\n";
+}
+
+#------------
+# End MAIN
+#------------
+
+# receives $_ (filename), chdir-ed to enclosing dir
+# $File::Find::dir  is path
+# $File::Find::name is full path to file
+sub check {
+    if (-l) {
+        if (-e) {
+            my $loc = readlink;
+            # check whether link is internal or external
+            my $absloc = File::Spec->rel2abs($loc);
+            if ($absloc !~ /^\Q$AbsDir\E/) {
+                print $SymLinkFh join("\t", "external", $File::Find::name, $loc), "\n";
+                # consider reporting size of external linked files
+                # not sure what to do about dirs; total size of contents?
+                ++$Stats{"external_links"};
+            }
+        }
+        else {
+            print $SymLinkFh "dead\t", $File::Find::name, "\n";
+            ++$Stats{"dead_links"};
+        }
+        return;
+    }
+    my @s = stat;
+    record_user_and_group(@s[4,5]);
+    if (-d _) {
+        # record permissions for directory, so can be reconstituted
+        print $DirPermFh join("\t", $File::Find::name, sprintf("%04o", $s[2] & 07777),
+                $User{$s[4]}, $Group{$s[5]}, @s[8,9]), "\n";
+    }
+    else {
+        $Stats{"total_size"} += $s[7];
+        # check last accessed/changed date
+        if ($Stats{"last_atime"} < $s[8]) {
+            $Stats{"last_atime"} = $s[8];
+        }
+        if ($Stats{"last_mtime"} < $s[9]) {
+            $Stats{"last_mtime"} = $s[9];
+        }
+    }
+}
+
+sub record_user_and_group {
+    my ($uid, $gid) = @_;
+    if (!exists $User{$uid}) {
+        ($User{$uid}) = getpwuid($uid);
+        if (!defined $User{$uid}) {
+            $User{$uid} = $uid;
+        }
+    }
+    if (!exists $Group{$gid}) {
+        ($Group{$gid}) = getgrgid($gid);
+        if (!defined $Group{$gid}) {
+            $Group{$gid} = $gid;
+        }
+    }
+}
+
+sub human_readable {
+    my ($val, $fmt) = @_;
+    $fmt ||= "%.2f";
+    my $suffix = $EMPTY;
+    if ($val > 1024) {
+        $val /= 1024;
+        $suffix = "K";
+    }
+    if ($val > 1024) {
+        $val /= 1024;
+        $suffix = "M";
+    }
+    if ($val > 1024) {
+        $val /= 1024;
+        $suffix = "G";
+    }
+    if ($val > 1024) {
+        $val /= 1024;
+        $suffix = "T";
+    }
+    return sprintf "$fmt\%s", $val, $suffix;
+}
+
+sub report_info {
+    $Stats{"grand_total"} += $Stats{"total_size"};
+    my $size = human_readable($Stats{"total_size"});
+    my $atime = localtime($Stats{"last_atime"});
+    my $mtime = localtime($Stats{"last_mtime"});
+    print $InfoFh <<"END_SUMMARY";
+Pre-archive report for $AbsDir
+\tTotal size of files:\t$size
+\tLatest access time:\t$atime
+\tLatest modify time:\t$mtime
+\tNumber of dead links:\t$Stats{"dead_links"}
+\tNo. of external links:\t$Stats{"external_links"}
+
+END_SUMMARY
+    print $InfoFh "Users who own files/directories in this tree:\n";
+    for my $u (sort values %User) {
+        print $InfoFh "\t$u\n";
+    }
+    print $InfoFh "Groups who can access files/directories in this tree:\n";
+    for my $g (sort values %Group) {
+        print $InfoFh "\t$g\n";
+    }
+    if ($Stats{"dead_links"}) {
+        $Stats{"warnings"}{"Dead symlinks were found"} = 1;
+    }
+    if ($Stats{"external_links"}) {
+        $Stats{"warnings"}{"Symlinks to external files were found"} = 1;
+    }
+    my $time = time;
+    if ($time - $Stats{"last_atime"} < $RECENT) {
+        $Stats{"warnings"}{"Some files have been accessed recently"} = 1;
+    }
+    if ($time - $Stats{"last_mtime"} < $RECENT) {
+        $Stats{"warnings"}{"Some files have been modified recently"} = 1;
+    }
+}
+
+sub process_commandline {
+    # Set defaults here
+    %Opt = ();
+    GetOptions(\%Opt, qw(output=s
+                manual help+ version)) || pod2usage(0);
+    if ($Opt{manual})  { pod2usage(verbose => 2); }
+    if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
+    if ($Opt{version}) { die "archive_check, ", q$Revision: 1991 $, "\n"; }
+    # If non-option arguments are required, uncomment next line
+    if (!@ARGV) {
+        pod2usage("Expected directory name(s)");
+    }
+    my @nd = grep { !-d } @ARGV;
+    if (@nd) {
+        warn "Argument '$_' is not a directory\n" for @nd;
+        pod2usage("All arguments must be existing directories");
+    }
+    # Add criteria to test option arguments below
+}
+
+__END__
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--output> PREFIX
+
+Prefix for output files.  Defaults to basename of first argument (directory).
+
+=item B<--help|--manual>
+
+Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
+all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 AUTHOR
+
+ Peter Chines - pchines@mail.nih.gov
+
+=head1 LEGAL
+
+This software/database is "United States Government Work" under the terms of
+the United States Copyright Act.  It was written as part of the authors'
+official duties for the United States Government and thus cannot be
+copyrighted.  This software/database is freely available to the public for
+use without a copyright notice.  Restrictions cannot be placed on its present
+or future use. 
+
+Although all reasonable efforts have been taken to ensure the accuracy and
+reliability of the software and data, the National Human Genome Research
+Institute (NHGRI) and the U.S. Government does not and cannot warrant the
+performance or results that may be obtained by using this software or data.
+NHGRI and the U.S.  Government disclaims all warranties as to performance,
+merchantability or fitness for any particular purpose. 
+
+In any work or product derived from this material, proper attribution of the
+authors as the source of the software or data should be made, using "NHGRI
+Genome Technology Branch" as the citation. 
+
+=cut
