@@ -14,10 +14,14 @@ our %Group;     # map GIDs to group names
 our $AbsDir;    # top-level directory
 our $SymLinkFh; # file for symlink output
 our $DirPermFh; # file for directory permissions
-our $InfoFh;    # file for other output
+our $InfoFh;    # file for other output (summary)
+our $DetailFh;  # file for file details (database)
 
 our $EMPTY = q{};
 our $RECENT = 60 * 60 * 24 * 30;    # one month
+our $Gzip = 'gzip';
+our $GzipIn;
+our $GzipOut;
 
 =head1 NAME
 
@@ -41,6 +45,8 @@ Check directories to be archived for potential problems, including:
  - recently accessed/changed files
 
 Also reports total size and file owners, for planning and confirmation.
+Generates a detailed database of all files and directories if a C<--details>
+file is specified.
 
 =cut
 
@@ -53,6 +59,11 @@ if ($Opt{output}) {
     $SymLinkFh = Open("$Opt{output}.link.txt", 'w');
     $DirPermFh = Open("$Opt{output}.dirs.txt", 'w');
     $InfoFh    = Open("$Opt{output}.info.txt", 'w');
+}
+if ($Opt{details}) {
+    $DetailFh  = Open($Opt{details}, 'w');
+    print $DetailFh join("\t",
+            qw(dir file mode user group size atime mtime)), "\n";
 }
 for my $dir (@ARGV) {
     # clear data structures
@@ -101,6 +112,13 @@ sub check {
             print $SymLinkFh "dead\t", $File::Find::name, "\n";
             ++$Stats{"dead_links"};
         }
+        if ($DetailFh) {
+            my @s = lstat;
+            print $DetailFh join("\t", $File::Find::dir, $_,
+                    sprintf("%06o", $s[2]), $User{$s[4]},
+                    $Group{$s[5]}, $s[7], iso_datetime($s[8]),
+                    iso_datetime($s[9])), "\n";
+        }
         return;
     }
     my @s = stat;
@@ -111,6 +129,12 @@ sub check {
                 $User{$s[4]}, $Group{$s[5]}, @s[8,9]), "\n";
     }
     else {
+        if ($DetailFh) {
+            print $DetailFh join("\t", $File::Find::dir, $_,
+                    sprintf("%06o", $s[2]), $User{$s[4]},
+                    $Group{$s[5]}, $s[7], iso_datetime($s[8]),
+                    iso_datetime($s[9])), "\n";
+        }
         $Stats{"total_size"} += $s[7];
         # check last accessed/changed date
         if ($Stats{"last_atime"} < $s[8]) {
@@ -120,6 +144,13 @@ sub check {
             $Stats{"last_mtime"} = $s[9];
         }
     }
+}
+
+sub iso_datetime {
+    my ($e) = @_;
+    my @t = $Opt{utc} ? gmtime($e) : localtime($e);
+    return sprintf("%d-%02d-%02dT%02d:%02d:%02d", $t[5]+1900, $t[4]+1, $t[3],
+            $t[2], $t[1], $t[0]);
 }
 
 sub record_user_and_group {
@@ -200,9 +231,6 @@ END_SUMMARY
 
 # cut and pasted from GTB::File, to avoid having non-core dependencies
 # then: s/croak/die/ (all of the "or die" were originally die, others croak)
-our $Gzip = 'gzip';
-our $GzipIn;
-our $GzipOut;
 sub Open {
     my ($file, $mode) = @_;
     if (!$file && $file ne '0') {
@@ -300,7 +328,7 @@ END_MSG
 sub process_commandline {
     # Set defaults here
     %Opt = ();
-    GetOptions(\%Opt, qw(output=s
+    GetOptions(\%Opt, qw(details=s output=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -323,9 +351,20 @@ __END__
 
 =over 4
 
+=item B<--details> FILE
+
+If a details file is provided, file directory, name, size, permissions and
+access/modify times will be written for each file.  Times will be in local
+timezone unless C<--utc> option is used.
+
 =item B<--output> PREFIX
 
 Prefix for output files.  Defaults to basename of each directory provided.
+
+=item B<--utc>
+
+Write time stamps in universal (GMT, aka UTC) time, rather than local
+timezone.
 
 =item B<--help|--manual>
 
