@@ -101,8 +101,10 @@ sub check {
             my $loc = readlink;
             # check whether link is internal or external
             my $absloc = File::Spec->rel2abs($loc);
-            if ($absloc !~ /^\Q$AbsDir\E/) {
-                print $SymLinkFh join("\t", "external", $File::Find::name, $loc), "\n";
+            my $pre = $Opt{ignore};
+            if ($absloc !~ /^(\Q$pre\E)?\Q$AbsDir\E/) {
+                print $SymLinkFh join("\t", "external", $File::Find::name,
+                        $loc, $absloc), "\n";
                 # consider reporting size of external linked files
                 # not sure what to do about dirs; total size of contents?
                 ++$Stats{"external_links"};
@@ -327,8 +329,8 @@ END_MSG
 
 sub process_commandline {
     # Set defaults here
-    %Opt = ();
-    GetOptions(\%Opt, qw(details=s output=s utc
+    %Opt = (ignore  => $EMPTY);
+    GetOptions(\%Opt, qw(details=s ignore=s output=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -340,9 +342,13 @@ sub process_commandline {
     my @nd = grep { !-d } @ARGV;
     if (@nd) {
         warn "Argument '$_' is not a directory\n" for @nd;
-        pod2usage("All arguments must be existing directories");
+        #pod2usage("All arguments must be existing directories");
     }
     # Add criteria to test option arguments below
+    if ($Opt{ignore}) {
+        # end without slash
+        $Opt{ignore} =~ s{/*$}{};
+    }
 }
 
 __END__
