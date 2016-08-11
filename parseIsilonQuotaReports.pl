@@ -36,7 +36,7 @@ if (!-r _) {
 
 my $dORv = $Opt{'sort'} eq 'total' ? 1 : 0;
 my $delta = $Opt{delta};
-my $WithOverhead = $Opt{logical} ? 0 : 1;
+my $WithOverhead = $Opt{logical} ? 0 : $Opt{nodes} ? 2 : 1;
 my $reportPath = $Opt{match};
 my %id2user;
 my %idUsage;
