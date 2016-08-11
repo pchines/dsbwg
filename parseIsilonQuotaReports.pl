@@ -96,9 +96,9 @@ foreach my $id (sort {$a <=> $b} keys %idUsage) {
 	push @f,$idUsage{$id}->[1];
 	if(!exists($id2user{$id})) {
 		#print "no user $id\n";
-		$id2user{$id}->[4] = $id;
+		$id2user{$id}->[$Opt{column}] = $id;
 	}
-	push @f,sprintf("%10.3e,%10.3e,%s\n",$delta,$idUsage{$id}->[1],$id2user{$id}->[4]);
+	push @f,sprintf("%10.3e\t%10.3e\t%s\n",$delta,$idUsage{$id}->[1],$id2user{$id}->[$Opt{column}]);
 	$du{$id} = \@f;
 }
 my $totalUsage = 0;
@@ -108,7 +108,7 @@ foreach my $id (sort {$du{$a}->[$dORv] <=> $du{$b}->[$dORv]} keys %du) {
 	$totalUsage += $du{$id}->[1];
 	$totalDelta += $du{$id}->[0];
 }
-printf("%10.3e,%10.3e\n",$totalDelta,$totalUsage);
+printf("%10.3e\t%10.3e\tTotal\n",$totalDelta,$totalUsage);
 
 sub process_file {
     my ($fname) = @_;
@@ -159,10 +159,11 @@ sub process_file {
 }
 
 sub process_commandline {
-    %Opt = (isilon_dir  => '/cluster/ifs/Isilon_quota_reports',
+    %Opt = (column      => 4,
+            isilon_dir  => '/cluster/ifs/Isilon_quota_reports',
             match       => 'projects',
             );
-    GetOptions(\%Opt, qw(delta:i isilon_dir=s logical match|m=s nodes sort=s
+    GetOptions(\%Opt, qw(column=i delta:i isilon_dir=s logical match|m=s nodes sort=s
                 manual help+ version)) || pod2usage(1);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -186,6 +187,12 @@ sub process_commandline {
 =head1 OPTIONS
 
 =over 4
+
+=item B<--column> N
+
+Which column of password file to report; defaults to 4 (comment); set to 0
+for username.  This option will likely change to something easier to remember
+in the near future.
 
 =item B<--delta> DAYS
 
