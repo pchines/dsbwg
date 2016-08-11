@@ -8,15 +8,15 @@ our $EMPTY = q{};
 
 =head1 NAME
 
-parseIsilonQuotaReports.pl - gather per-user disk usage info
+isilon_disk_used - gather per-user disk usage info
 
 =head1 SYNOPSIS
 
 Gather per-user disk usage, report:
 
-  parseIsilonQuotaReports.pl
+  isilon_disk_used
 
-For complete documentation, run C<parseIsilonQuotaReports.pl -man>
+For complete documentation, run C<isilon_disk_used -man>
 
 =head1 DESCRIPTION
 
@@ -167,7 +167,7 @@ sub process_commandline {
                 manual help+ version)) || pod2usage(1);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
-    if ($Opt{version}) { die "parseIsilonQuotaReports.pl, ", q$Revision: 1991 $, "\n"; }
+    if ($Opt{version}) { die "isilon_disk_used, ", q$Revision: 1991 $, "\n"; }
     $Opt{'sort'} ||= defined($Opt{delta}) ? 'delta' : 'total';
     if ($Opt{'sort'} =~ /^[cd]/i) {
         $Opt{'sort'} = 'delta';
