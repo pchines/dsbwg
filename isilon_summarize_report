@@ -1,0 +1,204 @@
+#!/usr/bin/perl -w
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use GTB::File qw(Open);
+use GTB::Run qw(as_number);
+use GTB::File::Iter;
+
+our %Opt;
+our $EMPTY = q{};
+our $COMMA = q{,};
+# NIH ActiveDirectory prefix
+our $NIH_PREFIX = "S-1-5-21-12604286-656692736-1848903544";
+
+=head1 NAME
+
+isilon_summarize_report - gather disk usage info from csv reports
+
+=head1 SYNOPSIS
+
+Gather per-user disk usage, report:
+
+  isilon_summarize_report server.usr.quota.csv
+
+For complete documentation, run C<isilon_summarize_report -man>
+
+=head1 DESCRIPTION
+
+Gather per-user disk usage, report total space used.
+
+=cut
+
+process_commandline();
+my $rh_user = read_passwd_files();
+my %user_dir;
+for my $file (@ARGV) {
+    my $date = $file =~ /(\d{8})/ ? $1 : $EMPTY;
+    my $serv = $file =~ /(\w+)\.usr\.quota/ ? $1 : "unknown";
+    my $iter = GTB::File::Iter->new(file => $file, fs => $COMMA);
+    while (my $rh = $iter->next_hash) {
+        add_user_dir($rh, \%user_dir, $rh_user, $serv);
+    }
+}
+report_totals(\%user_dir, $Opt{path});
+
+sub report_totals {
+    my ($rh_ud, $path) = @_;
+    my $ofh = Open($Opt{output}, 'w');
+    my $total = 0;
+    my $unk = 0;
+    my %user;
+    for my $u (keys %$rh_ud) {
+        my $rh_u = $rh_ud->{$u};
+        my @dirs = sort grep { !/^__/ } keys %$rh_u;
+        while (@dirs) {
+            my $d = shift @dirs;
+            my $used = $rh_u->{$d};
+            if (defined $used) {
+                $user{$u} += $used;
+                if ($Opt{details}) {
+                    print $ofh join($COMMA, $u, $d,
+                            sprintf($Opt{numeric}, $used)), "\n";
+                }
+                else {
+                    # have total, so exclude subdirs
+                    @dirs = grep { !/^$d/ } @dirs
+                }
+            }
+        }
+        print $ofh join($COMMA, $u, "TOTAL",
+                sprintf($Opt{numeric}, $user{$u})), "\n";
+        if ($u =~ /^(UID|SID|NIH):/) {
+            $unk += $user{$u};
+        }
+        $total += $user{$u};
+    }
+    # report totals
+    print $ofh join($COMMA, "Unknown", $EMPTY,
+            sprintf($Opt{numeric}, $unk)), "\n";
+    print $ofh join($COMMA, "TOTAL", $EMPTY,
+            sprintf($Opt{numeric}, $total)), "\n";
+}
+
+sub add_user_dir {
+    my ($rh, $rh_ud, $rh_uid, $host) = @_;
+    if ($rh->{Type} ne 'user') {
+        return;
+    }
+    my $user =$rh->{AppliesTo};
+    if ($rh->{AppliesTo} =~ /^UID:(\d+)/ && $rh_uid->{$1}) {
+        $user = $rh_uid->{$1};
+    }
+    elsif ($rh->{AppliesTo} =~ /^SID:$NIH_PREFIX-(\d+)$/) {
+        $user = "NIH:$1";
+    }
+    if ($rh_ud->{$user}{__ID__}
+            && $rh_ud->{$user}{__ID__} ne $rh->{AppliesTo}) {
+        warn "Warning: user $user IDs conflict: $rh->{AppliesTo}"
+            . " and $rh_ud->{$user}{__ID__}\n";
+    }
+    else {
+        $rh_ud->{$user}{__ID__} = $rh->{AppliesTo};
+    }
+    my $rh_u = $rh_ud->{$user};
+    my @dirs = File::Spec->splitdir($rh->{Path});
+    my $used = as_number($rh->{Used});
+    my $path = "$host:";
+    for my $d (@dirs) {
+        $path .= "/$d";
+        if ($rh_u->{$path}) {
+            if ($rh_u->{$path} < $used) {
+                warn sprintf("Notice: using larger estimate"
+                        . " $Opt{numeric} -> $Opt{numeric} (+%.1f%%)"
+                        . " for %s on %s\n",
+                        $rh_u->{$path}, $used,
+                        100*($used - $rh_u->{$path})/$rh_u->{$path},
+                        $user, $path);
+                $rh_u->{$path} = $used;
+            }
+        }
+    }
+    $rh_u->{$path} = $used;
+}
+
+sub read_passwd_files {
+    my $file = $Opt{etc};
+    my %user;
+    my $fh = Open($file);
+    while (<$fh>) {
+        chomp;
+        my @f = split /:/;
+        $user{$f[2]} = $f[$Opt{column}];
+    }
+    return \%user;
+}
+
+sub process_commandline {
+    %Opt = (column      => 0,
+            etc         => "/etc/passwd",
+            mounts      => "isilon_mounts.txt",
+            numeric     => "%.3e",
+            output      => "-",
+            passwd_dir  => "passwd_files",
+            );
+    GetOptions(\%Opt, qw(details etc=s
+                mounts=s numeric=s output=s passwd_dir=s total=s
+                manual help+ version)) || pod2usage(1);
+    if ($Opt{manual})  { pod2usage(verbose => 2); }
+    if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
+    if ($Opt{version}) { die "isilon_summarize_report, ", q$Revision: 1991 $, "\n"; }
+}
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--column> N
+
+Which column of password file to report; defaults to 0 (username); set to 4
+for comment (full name).  This option will likely change to something easier
+to remember in the near future.
+
+=item B<--mounts> isilon_mounts.txt
+
+Tab-delimited file describing mounts of isilon resources.  Important columns
+are: 'hostname', 'isilon', 'isilon_export'.
+
+=item B<--passwd_dir> passwd_files/
+
+Directory where host password files are kept.
+
+=item B<--help|--manual>
+
+Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
+all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 AUTHOR
+
+ Peter Chines - pchines@mail.nih.gov
+
+=head1 LEGAL
+
+This software/database is "United States Government Work" under the terms of
+the United States Copyright Act.  It was written as part of the authors'
+official duties for the United States Government and thus cannot be
+copyrighted.  This software/database is freely available to the public for
+use without a copyright notice.  Restrictions cannot be placed on its present
+or future use.
+
+Although all reasonable efforts have been taken to ensure the accuracy and
+reliability of the software and data, the National Human Genome Research
+Institute (NHGRI) and the U.S. Government does not and cannot warrant the
+performance or results that may be obtained by using this software or data.
+NHGRI and the U.S.  Government disclaims all warranties as to performance,
+merchantability or fitness for any particular purpose.
+
+In any work or product derived from this material, proper attribution of the
+authors as the source of the software or data should be made, using "NHGRI
+Genome Technology Branch" as the citation.
+
+=cut
