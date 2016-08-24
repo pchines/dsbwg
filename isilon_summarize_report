@@ -32,15 +32,21 @@ Gather per-user disk usage, report total space used.
 =cut
 
 process_commandline();
-my $rh_user = read_passwd_files();
+my $rh_mnt  = read_isilon_mounts();
+my $rh_host = {};
 my %user_dir;
+my %serv_hosts;
 for my $file (@ARGV) {
     my $date = $file =~ /(\d{8})/ ? $1 : $EMPTY;
     my $serv = $file =~ /(\w+)\.usr\.quota/ ? $1 : "unknown";
     my $iter = GTB::File::Iter->new(file => $file, fs => $COMMA);
     while (my $rh = $iter->next_hash) {
-        add_user_dir($rh, \%user_dir, $rh_user, $serv);
+        $serv_hosts{$serv}{$rh->{Path}}
+            ||= which_hosts($rh_mnt, $serv, $rh->{Path});
+        add_user_dir($rh, \%user_dir, $serv, $rh_host,
+                $serv_hosts{$serv}{$rh->{Path}});
     }
+    warn_missing_exports($rh_mnt, $serv);
 }
 report_totals(\%user_dir, $Opt{path});
 
@@ -83,35 +89,55 @@ sub report_totals {
 }
 
 sub add_user_dir {
-    my ($rh, $rh_ud, $rh_uid, $host) = @_;
+    my ($rh, $rh_ud, $isilon, $rh_uid, $ra_hosts) = @_;
     if ($rh->{Type} ne 'user') {
         return;
     }
     my $user =$rh->{AppliesTo};
-    if ($rh->{AppliesTo} =~ /^UID:(\d+)/ && $rh_uid->{$1}) {
-        $user = $rh_uid->{$1};
+    if ($rh->{AppliesTo} =~ /^UID:(\d+)/) {
+        my $uid = $1;
+        my $uname;
+        my $horig;
+        for my $h (@$ra_hosts) {
+            $rh_uid->{$h} ||= read_passwd_file($h);
+            if ($rh_uid->{$h}{$uid}) {
+                if ($uname && $uname !~ /\b\Q$rh_uid->{$h}{$uid}\E\b/) {
+                    warn "Warning: user ID $uid on $isilon:$rh->{Path}"
+                        . " maps to muliple names:"
+                        . " $uname($horig) and $rh_uid->{$h}{$uid}($h)\n";
+                    $uname .= "/$rh_uid->{$h}{$uid}";
+                }
+                else {
+                    $uname ||= $rh_uid->{$h}{$uid};
+                    $horig ||= $h;
+                }
+            }
+        }
+        if ($uname) {
+            $user = $uname;
+        }
     }
     elsif ($rh->{AppliesTo} =~ /^SID:$NIH_PREFIX-(\d+)$/) {
         $user = "NIH:$1";
     }
     if ($rh_ud->{$user}{__ID__}
             && $rh_ud->{$user}{__ID__} ne $rh->{AppliesTo}) {
-        warn "Warning: user $user IDs conflict: $rh->{AppliesTo}"
+        warn "Notice: user $user IDs conflict: $rh->{AppliesTo}"
             . " and $rh_ud->{$user}{__ID__}\n";
     }
     else {
         $rh_ud->{$user}{__ID__} = $rh->{AppliesTo};
     }
     my $rh_u = $rh_ud->{$user};
-    my @dirs = File::Spec->splitdir($rh->{Path});
+    my @dirs = grep { $_ } File::Spec->splitdir($rh->{Path});
     my $used = as_number($rh->{Used});
-    my $path = "$host:";
+    my $path = "$isilon:";
     for my $d (@dirs) {
         $path .= "/$d";
         if ($rh_u->{$path}) {
             if ($rh_u->{$path} < $used) {
                 warn sprintf("Notice: using larger estimate"
-                        . " $Opt{numeric} -> $Opt{numeric} (+%.1f%%)"
+                        . " $Opt{numeric} -> $Opt{numeric} ( +%.1f%% )"
                         . " for %s on %s\n",
                         $rh_u->{$path}, $used,
                         100*($used - $rh_u->{$path})/$rh_u->{$path},
@@ -123,10 +149,58 @@ sub add_user_dir {
     $rh_u->{$path} = $used;
 }
 
-sub read_passwd_files {
-    my $file = $Opt{etc};
+sub read_isilon_mounts {
+    my %mount;
+    my $iter = GTB::File::Iter->new(file => $Opt{mounts});
+    while (my $rh = $iter->next_hash) {
+        $mount{$rh->{isilon}}{$rh->{isilon_export}}{$rh->{hostname}} = undef;
+    }
+    return \%mount;
+}
+
+sub warn_missing_exports {
+    my ($rh_mnt, $serv) = @_;
+    for my $exp (sort keys %{ $rh_mnt->{$serv} }) {
+        my ($m) = values %{ $rh_mnt->{$serv}{$exp} };
+        if (!$m) {
+            warn "Warning: no quotas found for export $serv:$exp\n";
+        }
+    }
+}
+
+sub which_hosts {
+    my ($rh_mnt, $serv, $path) = @_;
+    my %hosts;
+    for my $exp (reverse sort keys %{ $rh_mnt->{$serv} }) {
+        if ($exp =~ /^$path/) {
+            for my $h (keys %{ $rh_mnt->{$serv}{$exp} }) {
+                ++$rh_mnt->{$serv}{$exp}{$h};
+                $hosts{$h} = undef;
+            }
+        }
+    }
+    my @hosts = sort keys %hosts;
+    if (!@hosts) {
+        warn "Warning: No hosts found connecting to $serv:$path or subdirs\n";
+    }
+    return \@hosts;
+}
+
+sub read_passwd_file {
+    my ($host) = @_;
+    my $f;
+    for my $pat ("$Opt{passwd_dir}/passwd_%s") {
+        if (-f sprintf($pat, $host)) {
+            $f = sprintf($pat, $host);
+            last;
+        }
+    }
+    if (!$f) {
+        warn "Warning: did not find passwd file for $host\n";
+        return {};
+    }
     my %user;
-    my $fh = Open($file);
+    my $fh = Open($f);
     while (<$fh>) {
         chomp;
         my @f = split /:/;
@@ -137,13 +211,12 @@ sub read_passwd_files {
 
 sub process_commandline {
     %Opt = (column      => 0,
-            etc         => "/etc/passwd",
             mounts      => "isilon_mounts.txt",
             numeric     => "%.3e",
             output      => "-",
             passwd_dir  => "passwd_files",
             );
-    GetOptions(\%Opt, qw(details etc=s
+    GetOptions(\%Opt, qw(details 
                 mounts=s numeric=s output=s passwd_dir=s total=s
                 manual help+ version)) || pod2usage(1);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
