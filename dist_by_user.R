@@ -20,6 +20,12 @@ table(x$status)
 
 k$user[k$user=="TOTAL"]="TOTAL of all users"
 k$user[k$user=="Unknown"]="TOTAL of unknown users"
+if (section != "" & file.exists("all.totals.csv")) {
+    tot=read.table("all.totals.csv", header=T, sep=",")
+    j=tot[,c("user","total")]
+    k=merge(k,j,all.x=T)
+    k[,paste0("frac",section)]=apply(k,1,function(x){as.numeric(x[paste0("total",section)]) / as.numeric(x["total"])})
+}
 write.csv(k,file=paste0("all", section, ".totals.csv"),quote=F,row.names=F)
 
 library(ggplot2)
