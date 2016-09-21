@@ -37,8 +37,9 @@ my $rh_host = {};
 my %user_dir;
 my %serv_hosts;
 for my $file (@ARGV) {
-    my $date = $file =~ /(\d{8})/ ? $1 : $EMPTY;
-    my $serv = $file =~ /(\w+)\.usr\.quota/ ? $1 : "unknown";
+    my $date = $file =~ /(\d{6,8})/ ? $1 : $EMPTY;
+    my $serv = $Opt{server};
+    $serv ||= $file =~ /(\w+)\.usr\.quota/ ? $1 : "unknown";
     my $iter = GTB::File::Iter->new(file => $file, fs => $COMMA);
     while (my $rh = $iter->next_hash) {
         $serv_hosts{$serv}{$rh->{Path}}
@@ -217,7 +218,7 @@ sub process_commandline {
             passwd_dir  => "passwd_files",
             );
     GetOptions(\%Opt, qw(details 
-                mounts=s numeric=s output=s passwd_dir=s total=s
+                mounts=s numeric=s output=s passwd_dir=s server=s total=s
                 manual help+ version)) || pod2usage(1);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -242,6 +243,10 @@ are: 'hostname', 'isilon', 'isilon_export'.
 =item B<--passwd_dir> passwd_files/
 
 Directory where host password files are kept.
+
+=item B<--server> isilon_name
+
+Specify isilon, otherwise is guessed from quota report name.
 
 =item B<--help|--manual>
 
