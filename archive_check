@@ -16,6 +16,7 @@ our $SymLinkFh; # file for symlink output
 our $DirPermFh; # file for directory permissions
 our $InfoFh;    # file for other output (summary)
 our $DetailFh;  # file for file details (database)
+our @DetailCols = qw(dir file mode user group size atime mtime);
 
 our $EMPTY = q{};
 our $RECENT = 60 * 60 * 24 * 30;    # one month
@@ -45,8 +46,8 @@ Check directories to be archived for potential problems, including:
  - recently accessed/changed files
 
 Also reports total size and file owners, for planning and confirmation.
-Generates a detailed database of all files and directories if a C<--details>
-file is specified.
+Generates a detailed database of all files unless the C<--nodetails> option
+is specified.
 
 =cut
 
@@ -56,18 +57,19 @@ file is specified.
 
 process_commandline();
 if ($Opt{output}) {
-    $SymLinkFh = Open("$Opt{output}.link.txt", 'w');
-    $DirPermFh = Open("$Opt{output}.dirs.txt", 'w');
-    $InfoFh    = Open("$Opt{output}.info.txt", 'w');
+    $SymLinkFh = Open("$Opt{output}.link.txt$Opt{gz_all}", 'w');
+    $DirPermFh = Open("$Opt{output}.dirs.txt$Opt{gz_big}", 'w');
+    $InfoFh    = Open("$Opt{output}.info.txt$Opt{gz_all}", 'w');
+    if ($Opt{details}) {
+        $DetailFh  = Open("$Opt{output}.files.txt$Opt{gz_big}", 'w');
+        print $DetailFh join("\t", @DetailCols), "\n";
+    }
 }
-if ($Opt{details}) {
-    $DetailFh  = Open($Opt{details}, 'w');
-    print $DetailFh join("\t",
-            qw(dir file mode user group size atime mtime)), "\n";
-}
+my %prefix;
 for my $dir (@ARGV) {
     # clear data structures
-    for my $i (qw(last_atime last_mtime dead_links external_links total_size)) {
+    for my $i (qw(last_atime last_mtime dead_links external_links
+                total_size files dirs)) {
         $Stats{$i} = 0;
     }
     %User = ();
@@ -76,9 +78,18 @@ for my $dir (@ARGV) {
     $AbsDir = File::Spec->rel2abs($dir);
     if (!$Opt{output}) {
         my ($v,$p,$d) = File::Spec->splitpath($AbsDir);
-        $SymLinkFh = Open("$d.link.txt", 'w');
-        $DirPermFh = Open("$d.dirs.txt", 'w');
-        $InfoFh    = Open("$d.info.txt", 'w');
+        if ($prefix{$d}) {
+            my $n = 2;
+            while ($prefix{"$d.$n"}) { ++$n; }
+            $d = "$d.$n";
+        }
+        $SymLinkFh = Open("$d.link.txt$Opt{gz_all}", 'w');
+        $DirPermFh = Open("$d.dirs.txt$Opt{gz_big}", 'w');
+        $InfoFh    = Open("$d.info.txt$Opt{gz_all}", 'w');
+        if ($Opt{details}) {
+            $DetailFh  = Open("$d.files.txt$Opt{gz_big}", 'w');
+            print $DetailFh join("\t", @DetailCols), "\n";
+        }
     }
     find(\&check, $AbsDir);
     report_info();
@@ -133,10 +144,13 @@ sub check {
     record_user_and_group(@s[4,5]);
     if (-d _) {
         # record permissions for directory, so can be reconstituted
-        print $DirPermFh join("\t", $File::Find::name, sprintf("%04o", $s[2] & 07777),
+        print $DirPermFh join("\t", $File::Find::name,
+                sprintf("%04o", $s[2] & 07777),
                 $User{$s[4]}, $Group{$s[5]}, @s[8,9]), "\n";
+        ++$Stats{dirs};
     }
     else {
+        ++$Stats{files};
         if ($DetailFh) {
             print $DetailFh join("\t", $File::Find::dir, $_,
                     sprintf("%06o", $s[2]), $User{$s[4]},
@@ -208,6 +222,8 @@ sub report_info {
     print $InfoFh <<"END_SUMMARY";
 Pre-archive report for $AbsDir
 \tTotal size of files:\t$size
+\tTotal number of files:\t$Stats{files}
+\tTotal number of dirs:\t$Stats{dirs}
 \tLatest access time:\t$atime
 \tLatest modify time:\t$mtime
 \tNumber of dead links:\t$Stats{"dead_links"}
@@ -335,13 +351,15 @@ END_MSG
 
 sub process_commandline {
     # Set defaults here
-    %Opt = (exclude => [],
-            ignore  => $EMPTY);
-    GetOptions(\%Opt, qw(details=s exclude=s ignore=s output=s utc
+    %Opt = (details => 1,
+            exclude => [],
+            ignore  => $EMPTY,
+            );
+    GetOptions(\%Opt, qw(details! exclude=s gzip! ignore=s output=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
-    if ($Opt{version}) { die "archive_check, ", q$Revision: 1991 $, "\n"; }
+    if ($Opt{version}) { die "archive_check, version 0.2.1\n"; }
     # If non-option arguments are required, uncomment next line
     if (!@ARGV) {
         pod2usage("Expected directory name(s)");
@@ -352,9 +370,19 @@ sub process_commandline {
         #pod2usage("All arguments must be existing directories");
     }
     # Add criteria to test option arguments below
-    if ($Opt{ignore}) {
+    $Opt{ignore} =~ s{/*$}{};
+    for (@{ $Opt{exclude} }) {
+        $_ = File::Spec->rel2abs($_);
         # end without slash
-        $Opt{ignore} =~ s{/*$}{};
+        s{/*$}{};
+    }
+    $Opt{gz_big} = ".gz";
+    $Opt{gz_all} = $EMPTY;
+    if ($Opt{gzip}) {
+        $Opt{gz_all} = ".gz";
+    }
+    elsif (defined $Opt{gzip}) {
+        $Opt{gz_big} = $EMPTY;
     }
 }
 
@@ -364,15 +392,24 @@ __END__
 
 =over 4
 
-=item B<--details> FILE
-
-If a details file is provided, file directory, name, size, permissions and
-access/modify times will be written for each file.  Times will be in local
-timezone unless C<--utc> option is used.
-
 =item B<--exclude> DIR
 
 Exclude the given subdirectory.  This option can be used multiple times.
+
+=item B<--gzip>
+
+=item B<--nogzip>
+
+Specify whether output files should all be gzip compressed or not.  By
+default, the files that are likely to become large are gzipped, and those
+that are likely to be small are not.
+
+=item B<--nodetails>
+
+By default, a "PREFIX.files.txt.gz" file is written, with details including
+file directory, name, size, permissions and access/modify times will be
+written for each file.  Times will be in local timezone unless C<--utc>
+option is used.  Use the C<--nodetails> option to disable writing this file.
 
 =item B<--output> PREFIX
 
@@ -387,6 +424,32 @@ timezone.
 
 Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
 all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 FILES
+
+The following output files are generated:
+
+=over 4
+
+=item PREFIX.info.txt
+
+Summary information, including total size, last modify/access time, and file
+owners and groups.
+
+=item PREFIX.link.txt
+
+List of external and broken symlinks.
+
+=item PREFIX.dirs.txt.gz
+
+Permissions and ownership for each directory (because these are not preserved in our tape archives).  Access and modify times are given in epoch seconds.
+
+=item PREFIX.files.txt.gz
+
+Directory, filename, permissions, owner, group, size, and modify/access times
+for each file and directory.
 
 =back
 
