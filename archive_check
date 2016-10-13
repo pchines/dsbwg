@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# $Id: archive_check,v 1.10 2007/09/26 19:40:41 pchines Exp $
+# $Id: archive_check v0.2.2 $
 
 use strict;
 use warnings;
@@ -407,7 +407,7 @@ sub process_commandline {
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
-    if ($Opt{version}) { die "archive_check, version 0.2.1\n"; }
+    if ($Opt{version}) { die "archive_check, version 0.2.2\n"; }
     # If non-option arguments are required, uncomment next line
     if (!@ARGV) {
         pod2usage("Expected directory name(s)");
