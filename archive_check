@@ -12,6 +12,7 @@ our %Stats;
 our %User;      # map UIDs to usernames
 our %Group;     # map GIDs to group names
 our $AbsDir;    # top-level directory
+our @Largest;   # largest files
 our $SymLinkFh; # file for symlink output
 our $DirPermFh; # file for directory permissions
 our $InfoFh;    # file for other output (summary)
@@ -157,6 +158,10 @@ sub check {
                     sprintf("%06o", $s[2]), $User{$s[4]},
                     $Group{$s[5]}, $s[7], iso_datetime($s[8]),
                     iso_datetime($s[9])), "\n";
+            if ($Opt{largest} &&
+                    (@Largest < $Opt{largest} || $s[7] > $Largest[-1][0])) {
+                insert_largest(\@Largest, [$s[7], $File::Find::dir."/$_"]);
+            }
         }
         $Stats{"total_size"} += $s[7];
         # check last accessed/changed date
@@ -166,6 +171,26 @@ sub check {
         if ($Stats{"last_mtime"} < $s[9]) {
             $Stats{"last_mtime"} = $s[9];
         }
+    }
+}
+
+sub insert_largest {
+    my ($ra_large, $ra_file) = @_;
+    my $j;
+    for (my $i = 0; $i < @$ra_large; ++$i) {
+        if ($ra_file->[0] > $ra_large->[$i][0]) {
+            $j = $i;
+            last;
+        }
+    }
+    if (defined $j) {
+        splice @$ra_large, $j, 0, $ra_file;
+    }
+    else {
+        push @$ra_large, $ra_file;
+    }
+    if (@$ra_large > $Opt{largest}) {
+        pop @$ra_large;
     }
 }
 
@@ -263,6 +288,14 @@ END_SUMMARY
     }
     if ($time - $Stats{"last_mtime"} < $RECENT) {
         $Stats{"warnings"}{"Some files have been modified recently"} = 1;
+    }
+    if ($Opt{largest}) {
+        print $InfoFh "Largest $Opt{largest} files in this tree:\n";
+        my $pre = $Opt{ignore};
+        for my $ra (@Largest) {
+            $ra->[1] =~ s{^(\Q$pre\E)?\Q$AbsDir\E/?}{./};
+            printf $InfoFh "\t%8s  %s\n", human_readable($ra->[0]), $ra->[1];
+        }
     }
 }
 
@@ -367,6 +400,7 @@ sub process_commandline {
     %Opt = (details => 1,
             exclude => [],
             ignore  => $EMPTY,
+            largest => 10,
             );
     GetOptions(\%Opt, qw(details! exclude=s gzip! ignore=s
                 largest=i output=s si utc
@@ -421,6 +455,10 @@ Specify whether output files should all be gzip compressed or not.  By
 default, the files that are likely to become large are gzipped, and those
 that are likely to be small are not.
 
+=item B<--largest> 10
+
+Show the largest N files in summary (info.txt).  Use 0 to disable.
+
 =item B<--nodetails>
 
 By default, a "PREFIX.files.txt.gz" file is written, with details including
@@ -456,8 +494,8 @@ The following output files are generated:
 
 =item PREFIX.info.txt
 
-Summary information, including total size, last modify/access time, and file
-owners and groups.
+Summary information, including total size, last modify/access time, file
+owners and groups, and largest N files.
 
 =item PREFIX.link.txt
 
