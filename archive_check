@@ -20,6 +20,7 @@ our @DetailCols = qw(dir file mode user group size atime mtime);
 
 our $EMPTY = q{};
 our $RECENT = 60 * 60 * 24 * 30;    # one month
+our $KILO = 1024;
 our $Gzip = 'gzip';
 our $GzipIn;
 our $GzipOut;
@@ -195,21 +196,25 @@ sub human_readable {
     my ($val, $fmt) = @_;
     $fmt ||= "%.2f";
     my $suffix = $EMPTY;
-    if ($val > 1024) {
-        $val /= 1024;
+    if ($val > $KILO) {
+        $val /= $KILO;
         $suffix = "K";
     }
-    if ($val > 1024) {
-        $val /= 1024;
+    if ($val > $KILO) {
+        $val /= $KILO;
         $suffix = "M";
     }
-    if ($val > 1024) {
-        $val /= 1024;
+    if ($val > $KILO) {
+        $val /= $KILO;
         $suffix = "G";
     }
-    if ($val > 1024) {
-        $val /= 1024;
+    if ($val > $KILO) {
+        $val /= $KILO;
         $suffix = "T";
+    }
+    if ($val > $KILO) {
+        $val /= $KILO;
+        $suffix = "P";
     }
     return sprintf "$fmt\%s", $val, $suffix;
 }
@@ -217,10 +222,18 @@ sub human_readable {
 sub report_info {
     $Stats{"grand_total"} += $Stats{"total_size"};
     my $size = human_readable($Stats{"total_size"});
-    my $atime = localtime($Stats{"last_atime"});
-    my $mtime = localtime($Stats{"last_mtime"});
+    if ($Opt{si}) {
+        $size .= " (reported in SI units, not binary)";
+    }
+    my $atime = $Opt{utc} ? gmtime($Stats{"last_atime"}) . " UTC"
+                          : localtime($Stats{"last_atime"});
+    my $mtime = $Opt{utc} ? gmtime($Stats{"last_mtime"}) . " UTC"
+                          : localtime($Stats{"last_mtime"});
+    my $rtime = $Opt{utc} ? gmtime() . " UTC" : localtime();
+    my $host = $ENV{HOSTNAME} || $ENV{HOST} || $ENV{COMPUTERNAME} || $EMPTY;
     print $InfoFh <<"END_SUMMARY";
-Pre-archive report for $AbsDir
+Pre-archive report for $host:$AbsDir
+\tReport generated:\t$rtime
 \tTotal size of files:\t$size
 \tTotal number of files:\t$Stats{files}
 \tTotal number of dirs:\t$Stats{dirs}
@@ -355,7 +368,8 @@ sub process_commandline {
             exclude => [],
             ignore  => $EMPTY,
             );
-    GetOptions(\%Opt, qw(details! exclude=s gzip! ignore=s output=s utc
+    GetOptions(\%Opt, qw(details! exclude=s gzip! ignore=s
+                largest=i output=s si utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -383,6 +397,9 @@ sub process_commandline {
     }
     elsif (defined $Opt{gzip}) {
         $Opt{gz_big} = $EMPTY;
+    }
+    if ($Opt{si}) {
+        $KILO = 1000;
     }
 }
 
@@ -414,6 +431,10 @@ option is used.  Use the C<--nodetails> option to disable writing this file.
 =item B<--output> PREFIX
 
 Prefix for output files.  Defaults to basename of each directory provided.
+
+=item B<--si>
+
+Use metric SI units (K=1000), rather than binary (K=1024).
 
 =item B<--utc>
 
