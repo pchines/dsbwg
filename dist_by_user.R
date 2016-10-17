@@ -36,7 +36,7 @@ library(ggplot2)
 pdf(paste0("storage_by_user", section, ".pdf"))
 cols=sapply(c("total",isilons), function(x){ paste0(x,section) })
 for (i in cols) {
-    print(ggplot(data=x)+geom_histogram(aes_string(x=i,fill="status"))+scale_x_log10(limits=c(1,1e15))+labs(x="Total storage used (log scale)",y="Number of Users",title=paste("Distribution of",i,"storage by User"))+theme_bw())
+    print(ggplot(data=x)+geom_histogram(aes_string(x=i,fill="status"))+scale_x_log10(limits=c(1,1e15),breaks=sapply(seq(3,15,3),function(x){10^x}))+labs(x="Total storage used (log scale)",y="Number of Users",title=paste("Distribution of",i,"storage by User"))+theme_bw())
 }
 dev.off()
 q()
