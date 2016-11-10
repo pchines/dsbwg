@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# $Id: archive_check v0.2.2 $
+# $Id: archive_check v0.3.0 $
 
 use strict;
 use warnings;
@@ -24,7 +24,7 @@ our @DetailCols = qw(dir file mode user group size atime mtime);
 
 our $EMPTY = q{};
 our $COMMA = q{,};
-our $RECENT = 60 * 60 * 24 * 30;    # one month
+our $RECENT = 60 * 60 * 24 * 30;    # one month, in seconds
 our $KILO = 1024;
 our $Gzip = 'gzip';
 our $GzipIn;
@@ -431,7 +431,7 @@ sub process_commandline {
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
-    if ($Opt{version}) { die "archive_check, version 0.2.2\n"; }
+    if ($Opt{version}) { die "archive_check, version 0.3.0\n"; }
     # If non-option arguments are required, uncomment next line
     if (!@ARGV) {
         pod2usage("Expected directory name(s)");
@@ -519,6 +519,9 @@ Special values allow commonly-specified suffixes to be easily identified:
     +IMG - images: bpm,gif,jpg,jpeg,png,tif,tiff
     +Z   - compressed: 7z,bz2,gz,zip,Z
 
+This option can be used multiple times, or multiple suffixes can be separated
+with commas.  When special values are used, they cannot be comma-separated.
+
 =item B<--utc>
 
 Write time stamps in universal (GMT, aka UTC) time, rather than local
@@ -579,6 +582,6 @@ merchantability or fitness for any particular purpose.
 
 In any work or product derived from this material, proper attribution of the
 authors as the source of the software or data should be made, using "NHGRI
-Genome Technology Branch" as the citation. 
+Information Technology Branch" as the citation. 
 
 =cut
