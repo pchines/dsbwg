@@ -13,6 +13,9 @@ our %User;      # map UIDs to usernames
 our %Group;     # map GIDs to group names
 our $AbsDir;    # top-level directory
 our @Largest;   # largest files
+our %Suffix;    # subtotals for each suffix: {suffix}[files,size]
+our $SuffixRe;  # regex for suffixes to capture
+
 our $SymLinkFh; # file for symlink output
 our $DirPermFh; # file for directory permissions
 our $InfoFh;    # file for other output (summary)
@@ -20,6 +23,7 @@ our $DetailFh;  # file for file details (database)
 our @DetailCols = qw(dir file mode user group size atime mtime);
 
 our $EMPTY = q{};
+our $COMMA = q{,};
 our $RECENT = 60 * 60 * 24 * 30;    # one month
 our $KILO = 1024;
 our $Gzip = 'gzip';
@@ -172,6 +176,10 @@ sub check {
         if ($Stats{"last_mtime"} < $s[9]) {
             $Stats{"last_mtime"} = $s[9];
         }
+        if ($SuffixRe && /$SuffixRe/) {
+            $Suffix{$1}[0] += 1;
+            $Suffix{$1}[1] += $s[7];
+        }
     }
 }
 
@@ -269,6 +277,20 @@ Pre-archive report for $host:$AbsDir
 \tNo. of external links:\t$Stats{"external_links"}
 
 END_SUMMARY
+    if ($SuffixRe) {
+        print $InfoFh "Files with specified suffixes:\n";
+        my $n = 0;
+        my $t = 0;
+        for my $suf (sort keys %Suffix) {
+            printf $InfoFh "\t%s:\t%d files, %s (%.1f%%)\n",
+                   $suf, $Suffix{$suf}[0], human_readable($Suffix{$suf}[1]),
+                   100 * $Suffix{$suf}[1] / $Stats{"total_size"};
+            $n += $Suffix{$suf}[0];
+            $t += $Suffix{$suf}[1];
+        }
+        printf $InfoFh "\ttotal:\t%d files, %s (%.1f%%)\n\n",
+               $n, human_readable($t), 100 * $t / $Stats{"total_size"};
+    }
     print $InfoFh "Users who own files/directories in this tree:\n";
     for my $u (sort values %User) {
         print $InfoFh "\t$u\n";
@@ -402,9 +424,10 @@ sub process_commandline {
             exclude => [],
             ignore  => $EMPTY,
             largest => 10,
+            suffixes=> [],
             );
     GetOptions(\%Opt, qw(details! exclude=s gzip! ignore=s
-                largest=i output=s si utc
+                largest=i output=s si suffixes=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -435,6 +458,15 @@ sub process_commandline {
     }
     if ($Opt{si}) {
         $KILO = 1000;
+    }
+    if ($Opt{suffixes}) {
+        my @suf = map { $_ eq "+ALL" ? '[^.]+'
+                      : $_ eq "+DOC" ? qw(doc xls ppt docx xlsx pptx pdf)
+                      : $_ eq "+IMG" ? qw(bpm gif jpg jpeg png tif tiff)
+                      : $_ eq "+Z" ? qw(gz bz2 zip Z 7z)
+                      : (split $COMMA) } @{ $Opt{suffixes} };
+        my $suf = join '|', @suf;
+        $SuffixRe = qr/\.($suf)$/o;
     }
 }
 
@@ -474,6 +506,18 @@ Prefix for output files.  Defaults to basename of each directory provided.
 =item B<--si>
 
 Use metric SI units (K=1000), rather than binary (K=1024).
+
+=item B<--suffixes> xls,csv,txt
+
+=item B<--suffixes> +ALL | +DOC | +IMG | +Z
+
+Specific file types (indicated by filename .suffix) to track and subtotal.
+Special values allow commonly-specified suffixes to be easily identified:
+
+    +ALL - any file with a suffix
+    +DOC - documents: doc,xls,ppt,docx,xlsx,pptx,pdf
+    +IMG - images: bpm,gif,jpg,jpeg,png,tif,tiff
+    +Z   - compressed: 7z,bz2,gz,zip,Z
 
 =item B<--utc>
 
