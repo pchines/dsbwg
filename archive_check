@@ -8,7 +8,7 @@ use Pod::Usage;
 use File::Find;
 use File::Spec;
 our %Opt;
-our %Stats;
+our %Stats;     # counts and totals
 our %User;      # map UIDs to usernames
 our %Group;     # map GIDs to group names
 our $AbsDir;    # top-level directory
@@ -76,6 +76,7 @@ for my $dir (@ARGV) {
     }
     %User = ();
     %Group = ();
+    @Largest = ();
     # evaluate each directory
     $AbsDir = File::Spec->rel2abs($dir);
     if (!$Opt{output}) {
