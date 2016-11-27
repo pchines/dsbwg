@@ -42,6 +42,9 @@ for my $file (@ARGV) {
     $serv ||= $file =~ /(\w+)\.usr\.quota/ ? $1 : "unknown";
     my $iter = create_iterator($file);
     while (my $rh = $iter->next_hash) {
+        if ($Opt{filter} && $rh->{Path} !~ /$Opt{filter}/o) {
+            next;
+        }
         $serv_hosts{$serv}{$rh->{Path}}
             ||= which_hosts($rh_mnt, $serv, $rh->{Path});
         add_user_dir($rh, \%user_dir, $serv, $rh_host,
@@ -69,6 +72,7 @@ sub create_iterator {
 sub report_totals {
     my ($rh_ud, $path) = @_;
     my $ofh = Open($Opt{output}, 'w');
+    my $dfh = $Opt{details} ? Open($Opt{details}, 'w') : undef;
     my $total = 0;
     my $unk = 0;
     my %user;
@@ -81,13 +85,11 @@ sub report_totals {
             if (defined $used) {
                 $user{$u} += $used;
                 if ($Opt{details}) {
-                    print $ofh join($COMMA, $u, $d,
+                    print $dfh join($COMMA, $u, $d,
                             sprintf($Opt{numeric}, $used)), "\n";
                 }
-                else {
-                    # have total, so exclude subdirs
-                    @dirs = grep { !/^$d/ } @dirs
-                }
+                # have total, so exclude subdirs
+                @dirs = grep { !/^$d/ } @dirs
             }
         }
         print $ofh join($COMMA, $u, "TOTAL",
@@ -232,8 +234,8 @@ sub process_commandline {
             output      => "-",
             passwd_dir  => "passwd_files",
             );
-    GetOptions(\%Opt, qw(details 
-                mounts=s numeric=s output=s passwd_dir=s server=s total=s
+    GetOptions(\%Opt, qw(details=s filter=s
+                mounts=s numeric=s output=s passwd_dir=s server=s
                 manual help+ version)) || pod2usage(1);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -244,16 +246,26 @@ sub process_commandline {
 
 =over 4
 
-=item B<--column> N
+=item B<--details> FILE
 
-Which column of password file to report; defaults to 0 (username); set to 4
-for comment (full name).  This option will likely change to something easier
-to remember in the near future.
+Write user/dir details to FILE.
+
+=item B<--filter> REGEXP
+
+Select only paths that match expression; ignore all others.
 
 =item B<--mounts> isilon_mounts.txt
 
 Tab-delimited file describing mounts of isilon resources.  Important columns
 are: 'hostname', 'isilon', 'isilon_export'.
+
+=item B<--numeric> SPRINTF_FMT
+
+Format for outputting values.
+
+=item B<--output> FILE
+
+Destination for report, otherwise sent to STDOUT.
 
 =item B<--passwd_dir> passwd_files/
 
