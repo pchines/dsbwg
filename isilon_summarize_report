@@ -131,7 +131,7 @@ sub add_user_dir {
     }
     my $rh_u = $rh_ud->{$user};
     my @dirs = grep { $_ } File::Spec->splitdir($rh->{Path});
-    my $used = as_number($rh->{Used});
+    my $used = $rh->{Used} eq '-' ? 0 : as_number($rh->{Used});
     my $path = "$isilon:";
     for my $d (@dirs) {
         $path .= "/$d";
