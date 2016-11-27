@@ -40,7 +40,7 @@ for my $file (@ARGV) {
     my $date = $file =~ /(\d{6,8})/ ? $1 : $EMPTY;
     my $serv = $Opt{server};
     $serv ||= $file =~ /(\w+)\.usr\.quota/ ? $1 : "unknown";
-    my $iter = GTB::File::Iter->new(file => $file, fs => $COMMA);
+    my $iter = create_iterator($file);
     while (my $rh = $iter->next_hash) {
         $serv_hosts{$serv}{$rh->{Path}}
             ||= which_hosts($rh_mnt, $serv, $rh->{Path});
@@ -50,6 +50,21 @@ for my $file (@ARGV) {
     warn_missing_exports($rh_mnt, $serv);
 }
 report_totals(\%user_dir, $Opt{path});
+
+sub create_iterator {
+    my ($file) = @_;
+    my $fh = Open($file);
+    my $head = <$fh>;
+    if ($head !~ /^Type\W+AppliesTo\W+Path.+Used\s*$/) {
+        die "Unexpected header in $file: $head\n";
+    }
+    if ($head =~ /$COMMA/) {
+        return GTB::File::Iter->new(file => $file, fs => $COMMA);
+    }
+    else {
+        return GTB::File::Iter->new(file => $file, skip => '------', fs => qr/\s+/);
+    }
+}
 
 sub report_totals {
     my ($rh_ud, $path) = @_;
