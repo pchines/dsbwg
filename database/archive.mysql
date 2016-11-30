@@ -1,0 +1,81 @@
+-- MySQL dump 10.13  Distrib 5.1.73, for redhat-linux-gnu (x86_64)
+--
+-- Host: fusdb    Database: nhgri_storage
+-- ------------------------------------------------------
+-- Server version	5.1.73-log
+
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!40101 SET NAMES utf8 */;
+/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
+/*!40103 SET TIME_ZONE='+00:00' */;
+/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
+/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
+/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+--
+-- Table structure for table `archives`
+--
+
+DROP TABLE IF EXISTS `archives`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `archives` (
+  `archive_id`    int           NOT NULL AUTO_INCREMENT,
+  `request_by`    varchar(30)   NOT NULL,
+  `request_date`  date          NOT NULL,
+  `user_host`     varchar(30)   NOT NULL
+    COMMENT 'host or drive user sees',
+  `user_folder`   varchar(2048) NOT NULL
+    COMMENT 'path users sees',
+  `description`   text          NOT NULL
+    COMMENT 'description of content', 
+  `sensitive`     tinyint       NOT NULL DEFAULT 0
+    COMMENT '1=contains sensitive info or PII, 2=removed, 3=encrypted',
+  `permanent`     tinyint       NOT NULL DEFAULT 0
+    COMMENT '1=may contain official records kept indefinitely, 2=confirmed',
+  `publication`   text          NULL
+    COMMENT 'related publications',
+  `curr_status`   varchar(30)   NOT NULL DEFAULT 'new'
+    COMMENT 'could be enum',
+  `real_host`     varchar(30)   NULL
+    COMMENT 'host, as seen by storage team',
+  `real_path`     varchar(2048) NULL
+    COMMENT 'full path to directory, as seen by storage team',
+  `archive_check` date          NULL
+    COMMENT 'date program run by Storage Team, and issues resolved',
+  `size`          float         NULL
+    COMMENT 'total size of files, in bytes',
+  `notify_users`  date          NULL
+    COMMENT 'date users notified of impending removal',
+  `staged_to`     varchar(1024) NULL
+    COMMENT 'where directory is moved to (same host/filesystem)',
+  `staged_date`   date          NULL,
+  `write_date`    date          NULL
+    COMMENT 'date written to tape (record tapes in archive_tapes table)',
+  `delete_date`   date          NULL
+    COMMENT 'date staged data is removed from disk',
+  `notes`         text          NULL
+    COMMENT 'storage team notes regarding this archive',
+  `dir_info`      blob          NULL
+    COMMENT 'compressed data: directory permissions from archive_check',
+  `file_info`     blob          NULL
+    COMMENT 'compressed data: file size and permissions from archive_check',
+  PRIMARY KEY (`archive_id`),
+  INDEX `i_request_by` (`request_by`),
+  INDEX `i_request_date` (`request_date`),
+  INDEX `i_status` (`curr_status`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
+/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+-- Dump completed on 2016-11-30 11:58:13
