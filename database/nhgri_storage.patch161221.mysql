@@ -1,0 +1,22 @@
+-- Note: Add user_totals tables
+-- File: nhgri_storage.patch161221.mysql
+DROP TABLE IF EXISTS `user_totals`;
+CREATE TABLE `user_totals` (
+  `id`       int          NOT NULL AUTO_INCREMENT,
+  `as_of`    date         NOT NULL,
+  `username` varchar(255) NOT NULL,
+  `used`     float        NOT NULL DEFAULT 0,
+  `isilon`   varchar(25)  NOT NULL DEFAULT 'TOTAL',
+  `area`     varchar(25)  NOT NULL DEFAULT 'TOTAL',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `iu_user_date_area` (`username`,`as_of`,`isilon`,`area`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `user_total_versions`;
+CREATE TABLE `user_total_versions` (
+  `as_of`    date NOT NULL,
+  `version`  int  NOT NULL DEFAULT 0,
+  PRIMARY KEY (`as_of`),
+  UNIQUE KEY `iu_version` (`version`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
