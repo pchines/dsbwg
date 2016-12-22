@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# $Id: archive_check v0.3.0 $
+# $Id: archive_check v0.3.1 $
 
 use strict;
 use warnings;
@@ -73,6 +73,7 @@ if ($Opt{output}) {
 }
 my %prefix;
 for my $dir (@ARGV) {
+    my $start_time = time;
     # clear data structures
     for my $i (qw(last_atime last_mtime dead_links external_links
                 total_size files dirs)) {
@@ -99,7 +100,7 @@ for my $dir (@ARGV) {
         }
     }
     find(\&check, $AbsDir);
-    report_info();
+    report_info($start_time);
 }
 warn "Grand total: ", human_readable($Stats{"grand_total"}), "\n";
 for my $w (sort keys %{ $Stats{"warnings"} }) {
@@ -140,14 +141,27 @@ sub check {
         }
         if ($DetailFh) {
             my @s = lstat;
-            print $DetailFh join("\t", $File::Find::dir, $_,
+            if (@s) {
+                record_user_and_group(@s[4,5]);
+                print $DetailFh join("\t", $File::Find::dir, $_,
                     sprintf("%06o", $s[2]), $User{$s[4]},
                     $Group{$s[5]}, $s[7], iso_datetime($s[8]),
                     iso_datetime($s[9])), "\n";
+            }
+            else {
+                warn "WARNING: could not lstat $File::Find::name\n";
+                add_warning("Could not retrieve info for one or more files",
+                        $InfoFh);
+            }
         }
         return;
     }
     my @s = stat;
+    if (!@s) {
+        warn "WARNING: could not stat $File::Find::name\n";
+        add_warning("Could not retrieve info for one or more files", $InfoFh);
+        return;
+    }
     record_user_and_group(@s[4,5]);
     if (-d _) {
         # record permissions for directory, so can be reconstituted
@@ -254,6 +268,8 @@ sub human_readable {
 }
 
 sub report_info {
+    my ($start) = @_;
+    my $end = time;
     $Stats{"grand_total"} += $Stats{"total_size"};
     my $size = human_readable($Stats{"total_size"});
     if ($Opt{si}) {
@@ -263,11 +279,15 @@ sub report_info {
                           : localtime($Stats{"last_atime"});
     my $mtime = $Opt{utc} ? gmtime($Stats{"last_mtime"}) . " UTC"
                           : localtime($Stats{"last_mtime"});
-    my $rtime = $Opt{utc} ? gmtime() . " UTC" : localtime();
+    my $stime = $Opt{utc} ? gmtime($start) . " UTC" : localtime($start);
+    my $etime = $Opt{utc} ? gmtime($end) . " UTC" : localtime($end);
+    my $elapsed = $end - $start;
     my $host = $ENV{HOSTNAME} || $ENV{HOST} || $ENV{COMPUTERNAME} || $EMPTY;
     print $InfoFh <<"END_SUMMARY";
 Pre-archive report for $host:$AbsDir
-\tReport generated:\t$rtime
+\tReport started :\t$stime
+\tReport finished:\t$etime
+\tElapsed (seconds):\t$elapsed
 \tTotal size of files:\t$size
 \tTotal number of files:\t$Stats{files}
 \tTotal number of dirs:\t$Stats{dirs}
@@ -299,18 +319,18 @@ END_SUMMARY
     for my $g (sort values %Group) {
         print $InfoFh "\t$g\n";
     }
+    print $InfoFh "\n";
     if ($Stats{"dead_links"}) {
-        $Stats{"warnings"}{"Dead symlinks were found"} = 1;
+        add_warning("Dead symlinks were found", $InfoFh);
     }
     if ($Stats{"external_links"}) {
-        $Stats{"warnings"}{"Symlinks to external files were found"} = 1;
+        add_warning("Symlinks to external files were found", $InfoFh);
     }
-    my $time = time;
-    if ($time - $Stats{"last_atime"} < $RECENT) {
-        $Stats{"warnings"}{"Some files have been accessed recently"} = 1;
+    if ($end - $Stats{"last_atime"} < $RECENT) {
+        add_warning("Some files have been accessed recently", $InfoFh);
     }
-    if ($time - $Stats{"last_mtime"} < $RECENT) {
-        $Stats{"warnings"}{"Some files have been modified recently"} = 1;
+    if ($end - $Stats{"last_mtime"} < $RECENT) {
+        add_warning("Some files have been modified recently", $InfoFh);
     }
     if ($Opt{largest}) {
         print $InfoFh "Largest $Opt{largest} files in this tree:\n";
@@ -319,6 +339,14 @@ END_SUMMARY
             $ra->[1] =~ s{^(\Q$pre\E)?\Q$AbsDir\E/?}{./};
             printf $InfoFh "\t%8s  %s\n", human_readable($ra->[0]), $ra->[1];
         }
+    }
+}
+
+sub add_warning {
+    my ($msg, $fh) = @_;
+    ++$Stats{"warnings"}{$msg};
+    if ($fh) {
+        print $fh "WARNING: ", $msg, "\n";
     }
 }
 
@@ -431,7 +459,7 @@ sub process_commandline {
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
-    if ($Opt{version}) { die "archive_check, version 0.3.0\n"; }
+    if ($Opt{version}) { die "archive_check, version 0.3.1\n"; }
     # If non-option arguments are required, uncomment next line
     if (!@ARGV) {
         pod2usage("Expected directory name(s)");
@@ -459,7 +487,7 @@ sub process_commandline {
     if ($Opt{si}) {
         $KILO = 1000;
     }
-    if ($Opt{suffixes}) {
+    if (@{ $Opt{suffixes} }) {
         my @suf = map { $_ eq "+ALL" ? '[^.]+'
                       : $_ eq "+DOC" ? qw(doc xls ppt docx xlsx pptx pdf)
                       : $_ eq "+IMG" ? qw(bpm gif jpg jpeg png tif tiff)
