@@ -22,6 +22,7 @@ our $InfoFh;    # file for other output (summary)
 our $DetailFh;  # file for file details (database)
 our @DetailCols = qw(dir file mode user group size atime mtime);
 
+our $TerminalAttached = -t STDOUT;
 our $EMPTY = q{};
 our $COMMA = q{,};
 our $RECENT = 60 * 60 * 24 * 30;    # one month, in seconds
@@ -102,6 +103,9 @@ for my $dir (@ARGV) {
     find(\&check, $AbsDir);
     report_info($start_time);
 }
+if ($TerminalAttached) {
+    print STDERR "\n";
+}
 warn "Grand total: ", human_readable($Stats{"grand_total"}), "\n";
 for my $w (sort keys %{ $Stats{"warnings"} }) {
     warn "$w\n";
@@ -169,6 +173,9 @@ sub check {
                 sprintf("%04o", $s[2] & 07777),
                 $User{$s[4]}, $Group{$s[5]}, @s[8,9]), "\n";
         ++$Stats{dirs};
+        if ($TerminalAttached && $Stats{dirs} % 100 == 0) {
+            print STDERR ".";
+        }
     }
     else {
         ++$Stats{files};
