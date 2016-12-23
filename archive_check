@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# $Id: archive_check v0.3.1 $
+# $Id: archive_check v0.3.2 $
 
 use strict;
 use warnings;
@@ -13,8 +13,10 @@ our %User;      # map UIDs to usernames
 our %Group;     # map GIDs to group names
 our $AbsDir;    # top-level directory
 our @Largest;   # largest files
+our @Newest;    # most recently accessed files
 our %Suffix;    # subtotals for each suffix: {suffix}[files,size]
 our $SuffixRe;  # regex for suffixes to capture
+our $RecentCutoff;  # epoch time minimum for "recent" files
 
 our $SymLinkFh; # file for symlink output
 our $DirPermFh; # file for directory permissions
@@ -25,7 +27,6 @@ our @DetailCols = qw(dir file mode user group size atime mtime);
 our $TerminalAttached = -t STDOUT;
 our $EMPTY = q{};
 our $COMMA = q{,};
-our $RECENT = 60 * 60 * 24 * 30;    # one month, in seconds
 our $KILO = 1024;
 our $Gzip = 'gzip';
 our $GzipIn;
@@ -83,6 +84,7 @@ for my $dir (@ARGV) {
     %User = ();
     %Group = ();
     @Largest = ();
+    @Newest = ();
     # evaluate each directory
     $AbsDir = File::Spec->rel2abs($dir);
     if (!$Opt{output}) {
@@ -184,12 +186,18 @@ sub check {
                     sprintf("%06o", $s[2]), $User{$s[4]},
                     $Group{$s[5]}, $s[7], iso_datetime($s[8]),
                     iso_datetime($s[9])), "\n";
-            if ($Opt{largest} &&
-                    (@Largest < $Opt{largest} || $s[7] > $Largest[-1][0])) {
-                insert_largest(\@Largest, [$s[7], $File::Find::dir."/$_"]);
-            }
+        }
+        if ($Opt{largest} &&
+                (@Largest < $Opt{largest} || $s[7] > $Largest[-1][0])) {
+            insert_largest(\@Largest, [$s[7], $File::Find::name],
+                    $Opt{largest});
         }
         $Stats{"total_size"} += $s[7];
+        if ($Opt{newest} && $s[8] > $RecentCutoff &&
+                (@Newest < $Opt{newest} || $s[8] > $Newest[-1][0])) {
+            insert_largest(\@Newest, [$s[8], $File::Find::name],
+                    $Opt{newest});
+        }
         # check last accessed/changed date
         if ($Stats{"last_atime"} < $s[8]) {
             $Stats{"last_atime"} = $s[8];
@@ -205,7 +213,7 @@ sub check {
 }
 
 sub insert_largest {
-    my ($ra_large, $ra_file) = @_;
+    my ($ra_large, $ra_file, $n) = @_;
     my $j;
     for (my $i = 0; $i < @$ra_large; ++$i) {
         if ($ra_file->[0] > $ra_large->[$i][0]) {
@@ -219,7 +227,7 @@ sub insert_largest {
     else {
         push @$ra_large, $ra_file;
     }
-    if (@$ra_large > $Opt{largest}) {
+    if (@$ra_large > $n) {
         pop @$ra_large;
     }
 }
@@ -333,14 +341,22 @@ END_SUMMARY
     if ($Stats{"external_links"}) {
         add_warning("Symlinks to external files were found", $InfoFh);
     }
-    if ($end - $Stats{"last_atime"} < $RECENT) {
+    if ($Stats{"last_atime"} > $RecentCutoff) {
         add_warning("Some files have been accessed recently", $InfoFh);
     }
-    if ($end - $Stats{"last_mtime"} < $RECENT) {
+    if ($Stats{"last_mtime"} > $RecentCutoff) {
         add_warning("Some files have been modified recently", $InfoFh);
     }
+    if ($Opt{newest} && @Newest) {
+        print $InfoFh scalar(@Newest), " most recently accessed files:\n";
+        my $pre = $Opt{ignore};
+        for my $ra (@Newest) {
+            $ra->[1] =~ s{^(\Q$pre\E)?\Q$AbsDir\E/?}{./};
+            print $InfoFh "\t", iso_datetime($ra->[0]), "\t", $ra->[1], "\n";
+        }
+    }
     if ($Opt{largest}) {
-        print $InfoFh "Largest $Opt{largest} files in this tree:\n";
+        print $InfoFh scalar(@Largest), " largest files in this tree:\n";
         my $pre = $Opt{ignore};
         for my $ra (@Largest) {
             $ra->[1] =~ s{^(\Q$pre\E)?\Q$AbsDir\E/?}{./};
@@ -458,15 +474,17 @@ sub process_commandline {
     %Opt = (details => 1,
             exclude => [],
             ignore  => $EMPTY,
-            largest => 10,
+            largest => 5,
+            newest  => 5,
+            recent  => 30,  # days
             suffixes=> [],
             );
     GetOptions(\%Opt, qw(details! exclude=s gzip! ignore=s
-                largest=i output=s si suffixes=s utc
+                largest=i newest=i output=s recent=i si suffixes=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
-    if ($Opt{version}) { die "archive_check, version 0.3.1\n"; }
+    if ($Opt{version}) { die "archive_check, version 0.3.2\n"; }
     # If non-option arguments are required, uncomment next line
     if (!@ARGV) {
         pod2usage("Expected directory name(s)");
@@ -503,6 +521,8 @@ sub process_commandline {
         my $suf = join '|', @suf;
         $SuffixRe = qr/\.($suf)$/o;
     }
+    # convert "recent" days to epoch seconds minimum cutoff
+    $RecentCutoff = time - 60 * 60 * 24 * $Opt{recent};
 }
 
 __END__
@@ -523,7 +543,7 @@ Specify whether output files should all be gzip compressed or not.  By
 default, the files that are likely to become large are gzipped, and those
 that are likely to be small are not.
 
-=item B<--largest> 10
+=item B<--largest> 5
 
 Show the largest N files in summary (info.txt).  Use 0 to disable.
 
@@ -534,9 +554,19 @@ file directory, name, size, permissions and access/modify times will be
 written for each file.  Times will be in local timezone unless C<--utc>
 option is used.  Use the C<--nodetails> option to disable writing this file.
 
+=item B<--newest> 5
+
+Show the most recently accessed (modified) N files in the summary report.
+Only "recent" files are considered.  See C<--recent>.  Use 0 to disable.
+
 =item B<--output> PREFIX
 
 Prefix for output files.  Defaults to basename of each directory provided.
+
+=item B<--recent> 30
+
+If any file has been accessed or modified within this number of days, issue a
+warning.  If C<--newest> is greater than zero, report specific files.
 
 =item B<--si>
 
