@@ -19,7 +19,6 @@
 -- Table structure for table `archives`
 --
 
-DROP TABLE IF EXISTS `archives`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `archives` (
@@ -39,7 +38,9 @@ CREATE TABLE `archives` (
   `publication`   text          NULL
     COMMENT 'related publications',
   `curr_status`   varchar(30)   NOT NULL DEFAULT 'new'
-    COMMENT 'could be enum',
+    COMMENT 'new, checking, ready, staged, complete, cancelled, destroyed',
+  `incident`      char(11)      NOT NULL DEFAULT ''
+    COMMENT 'incident ticket number to track request',
   `real_host`     varchar(30)   NULL
     COMMENT 'host, as seen by storage team',
   `real_path`     varchar(2048) NULL
@@ -52,9 +53,8 @@ CREATE TABLE `archives` (
     COMMENT 'date users notified of impending removal',
   `staged_to`     varchar(1024) NULL
     COMMENT 'where directory is moved to (same host/filesystem)',
-  `staged_date`   date          NULL,
-  `write_date`    date          NULL
-    COMMENT 'date written to tape (record tapes in archive_tapes table)',
+  `staged_date`   date          NULL
+    COMMENT 'date data is moved to staging area (start quarantine period)',
   `delete_date`   date          NULL
     COMMENT 'date staged data is removed from disk',
   `notes`         text          NULL
@@ -69,6 +69,21 @@ CREATE TABLE `archives` (
   INDEX `i_status` (`curr_status`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+CREATE TABLE `archive_tapes` (
+  `tape_id`       int           NOT NULL AUTO_INCREMENT,
+  `barcode`       varchar(32)   NOT NULL,
+  `archive_id`    int           NOT NULL,
+  `copy_no`       tinyint       NOT NULL DEFAULT 0,
+  `sequence_no`   smallint      NOT NULL DEFAULT 0,
+  `tape_type`     varchar(16)   NOT NULL DEFAULT 'LTO6',
+  `write_date`    date          NOT NULL,
+  `expire_date`   date          NOT NULL,
+  `location`      varchar(255)  NOT NULL DEFAULT '',
+  PRIMARY KEY (`tape_id`),
+  UNIQUE INDEX `iu_barcode` (`barcode`),
+  INDEX `i_archive_id` (`archive_id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
 /*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
