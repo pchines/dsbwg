@@ -1,5 +1,4 @@
 #!/usr/bin/perl -w
-# $Id: archive_check v0.3.2 $
 
 use strict;
 use warnings;
@@ -7,6 +6,7 @@ use Getopt::Long;
 use Pod::Usage;
 use File::Find;
 use File::Spec;
+our $VERSION = "0.3.3";
 our %Opt;
 our %Stats;     # counts and totals
 our %User;      # map UIDs to usernames
@@ -64,12 +64,12 @@ is specified.
 #------------
 
 process_commandline();
-if ($Opt{output}) {
-    $SymLinkFh = Open("$Opt{output}.link.txt$Opt{gz_all}", 'w');
-    $DirPermFh = Open("$Opt{output}.dirs.txt$Opt{gz_big}", 'w');
-    $InfoFh    = Open("$Opt{output}.info.txt$Opt{gz_all}", 'w');
+if ($Opt{prefix}) {
+    $SymLinkFh = Open("$Opt{prefix}.link.txt$Opt{gz_all}", 'w');
+    $DirPermFh = Open("$Opt{prefix}.dirs.txt$Opt{gz_big}", 'w');
+    $InfoFh    = Open("$Opt{prefix}.info.txt$Opt{gz_all}", 'w');
     if ($Opt{details}) {
-        $DetailFh  = Open("$Opt{output}.files.txt$Opt{gz_big}", 'w');
+        $DetailFh  = Open("$Opt{prefix}.files.txt$Opt{gz_big}", 'w');
         print $DetailFh join("\t", @DetailCols), "\n";
     }
 }
@@ -87,18 +87,18 @@ for my $dir (@ARGV) {
     @Newest = ();
     # evaluate each directory
     $AbsDir = File::Spec->rel2abs($dir);
-    if (!$Opt{output}) {
+    if (!$Opt{prefix}) {
         my ($v,$p,$d) = File::Spec->splitpath($AbsDir);
         if ($prefix{$d}) {
             my $n = 2;
             while ($prefix{"$d.$n"}) { ++$n; }
             $d = "$d.$n";
         }
-        $SymLinkFh = Open("$d.link.txt$Opt{gz_all}", 'w');
-        $DirPermFh = Open("$d.dirs.txt$Opt{gz_big}", 'w');
-        $InfoFh    = Open("$d.info.txt$Opt{gz_all}", 'w');
+        $SymLinkFh = Open("$Opt{outdir}$d.link.txt$Opt{gz_all}", 'w');
+        $DirPermFh = Open("$Opt{outdir}$d.dirs.txt$Opt{gz_big}", 'w');
+        $InfoFh    = Open("$Opt{outdir}$d.info.txt$Opt{gz_all}", 'w');
         if ($Opt{details}) {
-            $DetailFh  = Open("$d.files.txt$Opt{gz_big}", 'w');
+            $DetailFh  = Open("$Opt{outdir}$d.files.txt$Opt{gz_big}", 'w');
             print $DetailFh join("\t", @DetailCols), "\n";
         }
     }
@@ -127,29 +127,34 @@ sub check {
             return;
         }
     }
+    my $pre = $Opt{ignore};
+    my $dir = $File::Find::dir;
+    my $name = $File::Find::name;
+    if (!$Opt{fullpaths}) {
+        $dir =~ s{^(\Q$pre\E)?\Q$AbsDir\E}{.};
+        $name = "$dir/$_";
+    }
     if (-l) {
+        my $loc = readlink;
         if (-e) {
-            my $loc = readlink;
             # check whether link is internal or external
             my $absloc = File::Spec->rel2abs($loc);
-            my $pre = $Opt{ignore};
             if ($absloc !~ /^(\Q$pre\E)?\Q$AbsDir\E/) {
-                print $SymLinkFh join("\t", "external", $File::Find::name,
-                        $loc, $absloc), "\n";
+                print $SymLinkFh join("\t", "external", $name, $loc), "\n";
                 # consider reporting size of external linked files
                 # not sure what to do about dirs; total size of contents?
                 ++$Stats{"external_links"};
             }
         }
         else {
-            print $SymLinkFh "dead\t", $File::Find::name, "\n";
+            print $SymLinkFh join("\t", "dead", $name, $loc), "\n";
             ++$Stats{"dead_links"};
         }
         if ($DetailFh) {
             my @s = lstat;
             if (@s) {
                 record_user_and_group(@s[4,5]);
-                print $DetailFh join("\t", $File::Find::dir, $_,
+                print $DetailFh join("\t", $dir, $_,
                     sprintf("%06o", $s[2]), $User{$s[4]},
                     $Group{$s[5]}, $s[7], iso_datetime($s[8]),
                     iso_datetime($s[9])), "\n";
@@ -171,7 +176,7 @@ sub check {
     record_user_and_group(@s[4,5]);
     if (-d _) {
         # record permissions for directory, so can be reconstituted
-        print $DirPermFh join("\t", $File::Find::name,
+        print $DirPermFh join("\t", "$dir/$_",
                 sprintf("%04o", $s[2] & 07777),
                 $User{$s[4]}, $Group{$s[5]}, @s[8,9]), "\n";
         ++$Stats{dirs};
@@ -182,21 +187,19 @@ sub check {
     else {
         ++$Stats{files};
         if ($DetailFh) {
-            print $DetailFh join("\t", $File::Find::dir, $_,
+            print $DetailFh join("\t", $dir, $_,
                     sprintf("%06o", $s[2]), $User{$s[4]},
                     $Group{$s[5]}, $s[7], iso_datetime($s[8]),
                     iso_datetime($s[9])), "\n";
         }
         if ($Opt{largest} &&
                 (@Largest < $Opt{largest} || $s[7] > $Largest[-1][0])) {
-            insert_largest(\@Largest, [$s[7], $File::Find::name],
-                    $Opt{largest});
+            insert_largest(\@Largest, [$s[7], $name], $Opt{largest});
         }
         $Stats{"total_size"} += $s[7];
         if ($Opt{newest} && $s[8] > $RecentCutoff &&
                 (@Newest < $Opt{newest} || $s[8] > $Newest[-1][0])) {
-            insert_largest(\@Newest, [$s[8], $File::Find::name],
-                    $Opt{newest});
+            insert_largest(\@Newest, [$s[8], $name], $Opt{newest});
         }
         # check last accessed/changed date
         if ($Stats{"last_atime"} < $s[8]) {
@@ -479,12 +482,12 @@ sub process_commandline {
             recent  => 30,  # days
             suffixes=> [],
             );
-    GetOptions(\%Opt, qw(details! exclude=s gzip! ignore=s
-                largest=i newest=i output=s recent=i si suffixes=s utc
+    GetOptions(\%Opt, qw(details! exclude=s fullpaths gzip! ignore=s
+                largest=i newest=i output|outdir|prefix=s recent=i si suffixes=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
-    if ($Opt{version}) { die "archive_check, version 0.3.2\n"; }
+    if ($Opt{version}) { die "archive_check, version $VERSION\n"; }
     # If non-option arguments are required, uncomment next line
     if (!@ARGV) {
         pod2usage("Expected directory name(s)");
@@ -495,6 +498,29 @@ sub process_commandline {
         #pod2usage("All arguments must be existing directories");
     }
     # Add criteria to test option arguments below
+    if ($Opt{output}) {
+        if (-d $Opt{output}) {
+            $Opt{outdir} = $Opt{output};
+            $Opt{outdir} =~ s{/*$}{/};
+        }
+        else {
+            $Opt{prefix} = $Opt{output};
+            (undef, $Opt{outdir}, undef) = File::Spec->splitpath($Opt{prefix});
+            if (@ARGV > 1) {
+                $Opt{fullpaths} = 1;
+            }
+        }
+    }
+    $Opt{outdir} ||= "./";
+    if (!-e $Opt{outdir}) {
+        die "Output directory '$Opt{outdir}' does not exist; please create"
+            . " it first.\n";
+    }
+    if (!-w $Opt{outdir}) {
+        die "You do not have permission to write to output directory\n"
+            . "'$Opt{outdir}'; please specify a different location using"
+            . " the -o option\n";
+    }
     $Opt{ignore} =~ s{/*$}{};
     for (@{ $Opt{exclude} }) {
         $_ = File::Spec->rel2abs($_);
@@ -535,6 +561,13 @@ __END__
 
 Exclude the given subdirectory.  This option can be used multiple times.
 
+=item B<--fullpaths>
+
+Write full paths to details file; this is automatically done when multiple
+directories are scanned, and the results are written to a single file.
+Otherwise, it should probably be avoided, as it uses extra space, makes
+comparison more difficult, and doesn't add any information.
+
 =item B<--gzip>
 
 =item B<--nogzip>
@@ -559,9 +592,13 @@ option is used.  Use the C<--nodetails> option to disable writing this file.
 Show the most recently accessed (modified) N files in the summary report.
 Only "recent" files are considered.  See C<--recent>.  Use 0 to disable.
 
+=item B<--output> DIR
+
 =item B<--output> PREFIX
 
-Prefix for output files.  Defaults to basename of each directory provided.
+Destination directory or prefix (may contain a path) for output files.
+Default is to write to current directory, using the basename of each
+directory scanned as a prefix.
 
 =item B<--recent> 30
 
