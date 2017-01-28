@@ -1,0 +1,194 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use NHGRI::Db::Connector;
+use GTB::File qw(Open);
+our %Opt;
+our $Dbc;
+our $VERSION = '0.1';
+our $KILO = 1024;
+our $EMPTY = q{};
+
+=head1 NAME
+
+db_upload_passwd - update database with Unix passwd info
+
+=head1 SYNOPSIS
+
+Update/insert user IDs for a single passwd file:
+
+  db_upload_passwd -s server /etc/passwd
+
+Update/insert user IDs for passwd files, where each hostname follows an
+underscore in the filename:
+
+  db_upload_passwd /path/to/passwd_*
+
+Erase all existing UIDs for specified server hostname:
+
+  db_upload_passwd -erase -server HOSTNAME
+
+For complete documentation, run C<db_upload_passwd -man>
+
+=head1 DESCRIPTION
+
+Update database with Unix UIDs from /etc/passwd files.
+
+=cut
+
+#------------
+# Begin MAIN 
+#------------
+
+process_commandline();
+$Dbc = NHGRI::Db::Connector->new(-realm => $Opt{db},
+        -dbi_attrib  => {
+            RaiseError => 1,
+            PrintError => 0,
+            AutoCommit => 1,
+            },
+        );
+if ($Opt{erase} && $Opt{server}) {
+    erase_uids($Opt{server});
+    exit(0);
+}
+for my $file (@ARGV) {
+    my $server;
+    if ($Opt{server}) {
+        $server = $Opt{server};
+    }
+    elsif ($file =~ /_([\w\.-]+)$/) {
+        $server = $1;
+    }
+    else {
+        warn "Can't determine server name for '$file';"
+            . " submit separately with explicit\n"
+            . "-server option\n";
+        next;
+    }
+    my $rh_uids = read_passwd_file($file);
+    update_uids($server, $rh_uids);
+}
+
+#------------
+# End MAIN
+#------------
+
+sub read_passwd_file {
+    my ($file) = @_;
+    my %user;
+    my $fh = Open($file);
+    while (<$fh>) {
+        chomp;
+        my @f = split /:/;
+        $user{$f[2]} = $f[0];
+    }
+    return \%user;
+}
+
+sub update_uids {
+    my ($server, $rh_uid) = @_;
+    my $dbh = $Dbc->connect();
+    my $sql = q/REPLACE INTO unix_passwd (host, uid, username) VALUES (?,?,?)/;
+    my $sth = $dbh->prepare($sql);
+    while (my ($uid, $name) = each %$rh_uid) {
+        $sth->execute($server, $uid, $name);
+    }
+}
+
+sub erase_uids {
+    my ($server) = @_;
+    my $dbh = $Dbc->connect();
+    my $sql = q/DELETE FROM unix_passwd WHERE host = ?/;
+    my $sth = $dbh->prepare($sql);
+    $sth->execute($server);
+}
+
+sub process_commandline {
+    # Set defaults here
+    %Opt = (db          => 'storage',
+            );
+    GetOptions(\%Opt, qw(db=s erase server=s
+                manual help+ version)) || pod2usage(0);
+    if ($Opt{manual})  { pod2usage(verbose => 2); }
+    if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
+    if ($Opt{version}) { die "db_upload_passwd, version $VERSION\n"; }
+    # If non-option arguments are required, uncomment next line
+    if ($Opt{erase}) {
+        if (!$Opt{server}) {
+            pod2usage("Must supply -server name with -erase option");
+        }
+        if (@ARGV) {
+            warn "Files supplied with -erase option will be ignored\n";
+        }
+    }
+    elsif (!@ARGV) {
+        pod2usage("Expected passwd files as input");
+    }
+    elsif (@ARGV > 1 && $Opt{server}) {
+        pod2usage("Can't provide more than one passwd file with explicit -server name");
+    }
+    elsif (@ARGV == 1 && !$Opt{server} && $ARGV[0] eq '/etc/passwd') {
+        $Opt{server} = $ENV{HOSTNAME};
+        $Opt{server} =~ s/\..+//;
+        warn "Using '$Opt{server}' as server host name\n";
+    }
+}
+
+__END__
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--id> N
+
+Required.  Database ID for this archive request.
+
+=item B<--db> realm
+
+Database realm to use to connec to the database.  The default realm name is
+"storage".  Having this realm file configured allows you to connect to the
+database with your own credentials, without having to manually supply a
+password every time.  See C<NHGRI::Db::Connector> for details.
+
+=item B<--noupload>
+
+By default, this script uploads a copy of the "PREFIX.files.txt.gz" and
+"PREFIX.dirs.txt.gz" to the database.  This option prevents that,
+
+=item B<--help|--manual>
+
+Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
+all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 AUTHOR
+
+ Peter Chines - pchines@mail.nih.gov
+
+=head1 LEGAL
+
+This software/database is "United States Government Work" under the terms of
+the United States Copyright Act.  It was written as part of the authors'
+official duties for the United States Government and thus cannot be
+copyrighted.  This software/database is freely available to the public for
+use without a copyright notice.  Restrictions cannot be placed on its present
+or future use. 
+
+Although all reasonable efforts have been taken to ensure the accuracy and
+reliability of the software and data, the National Human Genome Research
+Institute (NHGRI) and the U.S. Government does not and cannot warrant the
+performance or results that may be obtained by using this software or data.
+NHGRI and the U.S.  Government disclaims all warranties as to performance,
+merchantability or fitness for any particular purpose. 
+
+In any work or product derived from this material, proper attribution of the
+authors as the source of the software or data should be made, using "NHGRI
+Information Technology Branch" as the citation. 
+
+=cut

@@ -1,0 +1,23 @@
+-- Note: Add unix_passwd table
+-- File: nhgri_storage.patch170128.mysql
+DROP TABLE IF EXISTS `unix_passwd`;
+CREATE TABLE `unix_passwd` (
+  `host`     varchar(50) NOT NULL,
+  `uid`      int         NOT NULL,
+  `username` varchar(50) NOT NULL,
+  PRIMARY KEY (`host`,`uid`),
+  KEY `i_user` (`username`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `isilon_mounts`;
+CREATE TABLE `isilon_mounts` (
+  `id`       int NOT NULL AUTO_INCREMENT,
+  `isilon`   varchar(50) NOT NULL,
+  `exported` varchar(1024) NOT NULL,
+  `host`     varchar(50) NOT NULL,
+  `mounted`  varchar(1024) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `i_isilon` (`isilon`,`host`),
+  KEY `i_host` (`host`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
