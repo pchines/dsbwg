@@ -19,6 +19,8 @@
 -- Table structure for table `archives`
 --
 
+-- save data (delete later)
+RENAME TABLE archives TO archives_170127;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `archives` (
@@ -38,9 +40,9 @@ CREATE TABLE `archives` (
   `publication`   text          NULL
     COMMENT 'related publications',
   `curr_status`   varchar(30)   NOT NULL DEFAULT 'new'
-    COMMENT 'new, checking, ready, staged, complete, cancelled, destroyed',
-  `incident`      char(11)      NOT NULL DEFAULT ''
-    COMMENT 'incident ticket number to track request',
+    COMMENT 'new, checked, notified, ready, staged, complete, cancelled, destroyed',
+  `inc_prepare`  char(11)      NOT NULL DEFAULT ''
+    COMMENT 'incident ticket number to track preparation of request',
   `real_host`     varchar(30)   NULL
     COMMENT 'host, as seen by storage team',
   `real_path`     varchar(2048) NULL
@@ -51,6 +53,8 @@ CREATE TABLE `archives` (
     COMMENT 'total size of files, in bytes',
   `notify_users`  date          NULL
     COMMENT 'date users notified of impending removal',
+  `inc_archive`  char(11)      NOT NULL DEFAULT ''
+    COMMENT 'incident ticket number to track creation of archive',
   `staged_to`     varchar(1024) NULL
     COMMENT 'where directory is moved to (same host/filesystem)',
   `staged_date`   date          NULL
@@ -69,6 +73,31 @@ CREATE TABLE `archives` (
   INDEX `i_status` (`curr_status`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+-- transition data to new table structure
+INSERT INTO archives (
+    archive_id,
+    request_by,
+    request_date,
+    user_host,
+    user_folder,
+    description,
+    `sensitive`,
+    permanent,
+    publication,
+    curr_status)
+  SELECT
+    archive_id,
+    request_by,
+    request_date,
+    user_host,
+    user_folder,
+    description,
+    `sensitive`,
+    permanent,
+    publication,
+    curr_status
+  FROM archives_170127;
 
 CREATE TABLE `archive_tapes` (
   `tape_id`       int           NOT NULL AUTO_INCREMENT,
