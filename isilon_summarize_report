@@ -3,11 +3,13 @@ use strict;
 use warnings;
 use Getopt::Long;
 use Pod::Usage;
+use NHGRI::Db::Connector;
 use GTB::File qw(Open);
 use GTB::Run qw(as_number);
 use GTB::File::Iter;
 
 our %Opt;
+our $Dbc;
 our $EMPTY = q{};
 our $COMMA = q{,};
 # NIH ActiveDirectory prefix
@@ -32,6 +34,11 @@ Gather per-user disk usage, report total space used.
 =cut
 
 process_commandline();
+$Dbc = NHGRI::Db::Connector->new(-realm => $Opt{db}, -dbi_attrib => {
+        RaiseError => 1,
+        PrintError => 0,
+        AutoCommit => 1,
+        });
 my $rh_mnt  = read_isilon_mounts();
 my $rh_host = {};
 my %user_dir;
@@ -168,10 +175,16 @@ sub add_user_dir {
 }
 
 sub read_isilon_mounts {
+    my $dbh = $Dbc->connect();
     my %mount;
-    my $iter = GTB::File::Iter->new(file => $Opt{mounts});
-    while (my $rh = $iter->next_hash) {
-        $mount{$rh->{isilon}}{$rh->{isilon_export}}{$rh->{hostname}} = undef;
+    my $sql = q/
+        SELECT isilon, exported, host, mounted
+          FROM isilon_mounts
+        /;
+    my $sth = $dbh->prepare($sql);
+    $sth->execute();
+    while (my $rh = $sth->fetchrow_hashref) {
+        $mount{$rh->{isilon}}{$rh->{exported}}{$rh->{host}}{mount_point} = $rh->{mounted};
     }
     return \%mount;
 }
@@ -179,7 +192,7 @@ sub read_isilon_mounts {
 sub warn_missing_exports {
     my ($rh_mnt, $serv) = @_;
     for my $exp (sort keys %{ $rh_mnt->{$serv} }) {
-        my ($m) = values %{ $rh_mnt->{$serv}{$exp} };
+        my ($m) = grep { $rh_mnt->{$serv}{$exp}{$_}{hosts} } keys %{ $rh_mnt->{$serv}{$exp} };
         if (!$m) {
             warn "Warning: no quotas found for export $serv:$exp\n";
         }
@@ -192,7 +205,7 @@ sub which_hosts {
     for my $exp (reverse sort keys %{ $rh_mnt->{$serv} }) {
         if ($exp =~ /^$path/) {
             for my $h (keys %{ $rh_mnt->{$serv}{$exp} }) {
-                ++$rh_mnt->{$serv}{$exp}{$h};
+                ++$rh_mnt->{$serv}{$exp}{$h}{hosts};
                 $hosts{$h} = undef;
             }
         }
@@ -206,36 +219,31 @@ sub which_hosts {
 
 sub read_passwd_file {
     my ($host) = @_;
-    my $f;
-    for my $pat ("$Opt{passwd_dir}/passwd_%s") {
-        if (-f sprintf($pat, $host)) {
-            $f = sprintf($pat, $host);
-            last;
-        }
-    }
-    if (!$f) {
-        warn "Warning: did not find passwd file for $host\n";
-        return {};
-    }
+    my $dbh = $Dbc->connect();
+    my $sql = q/
+        SELECT uid, username
+          FROM unix_passwd
+         WHERE host = ?
+        /;
+    my $sth = $dbh->prepare($sql);
+    $sth->execute($host);
     my %user;
-    my $fh = Open($f);
-    while (<$fh>) {
-        chomp;
-        my @f = split /:/;
-        $user{$f[2]} = $f[$Opt{column}];
+    while (my $rh = $sth->fetchrow_hashref) {
+        $user{ $rh->{uid} } = $rh->{username};
+    }
+    if (!scalar keys %user) {
+        warn "Warning: did not find passwd file for $host\n";
     }
     return \%user;
 }
 
 sub process_commandline {
-    %Opt = (column      => 0,
-            mounts      => "isilon_mounts.txt",
+    %Opt = (db          => "storage",
             numeric     => "%.3e",
             output      => "-",
-            passwd_dir  => "passwd_files",
             );
-    GetOptions(\%Opt, qw(details=s filter=s
-                mounts=s numeric=s output=s passwd_dir=s server=s
+    GetOptions(\%Opt, qw(details|d=s db|database=s filter=s
+                numeric=s output=s server=s
                 manual help+ version)) || pod2usage(1);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -246,6 +254,11 @@ sub process_commandline {
 
 =over 4
 
+=item B<--db> realm
+
+Database realm to connect to, defaults to 'storage'.  You will need to set up
+a private realm file of this name, using dbc_realm.
+
 =item B<--details> FILE
 
 Write user/dir details to FILE.
@@ -254,11 +267,6 @@ Write user/dir details to FILE.
 
 Select only paths that match expression; ignore all others.
 
-=item B<--mounts> isilon_mounts.txt
-
-Tab-delimited file describing mounts of isilon resources.  Important columns
-are: 'hostname', 'isilon', 'isilon_export'.
-
 =item B<--numeric> SPRINTF_FMT
 
 Format for outputting values.
@@ -266,10 +274,6 @@ Format for outputting values.
 =item B<--output> FILE
 
 Destination for report, otherwise sent to STDOUT.
-
-=item B<--passwd_dir> passwd_files/
-
-Directory where host password files are kept.
 
 =item B<--server> isilon_name
 
@@ -304,6 +308,6 @@ merchantability or fitness for any particular purpose.
 
 In any work or product derived from this material, proper attribution of the
 authors as the source of the software or data should be made, using "NHGRI
-Genome Technology Branch" as the citation.
+Information Technology Branch" as the citation.
 
 =cut
