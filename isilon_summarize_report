@@ -46,7 +46,8 @@ my %serv_hosts;
 for my $file (@ARGV) {
     my $date = $file =~ /(\d{6,8})/ ? $1 : $EMPTY;
     my $serv = $Opt{server};
-    $serv ||= $file =~ /(\w+)\.usr\.quota/ ? $1 : "unknown";
+    $serv ||= $file =~ /(\w+)\.(?:usr\.quota|\d{4}-\d\d-\d\d\.flat_file)/
+        ? $1 : "unknown";
     my $iter = create_iterator($file);
     while (my $rh = $iter->next_hash) {
         if ($Opt{filter} && $rh->{Path} !~ /$Opt{filter}/o) {
