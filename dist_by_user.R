@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 args=commandArgs(trailingOnly = T)
 section=ifelse(length(args)>0, paste0(".",args[1]), "")
-isilons=c("centaur","ketu","spock","wyvern")
+isilons=c("bo","centaur","ketu","spock","wyvern")
 k=data.frame(user=character(0))
 for (n in isilons) {
     i=read.table(paste0(n,section,".csv"), header=F, sep=",", col.names=c("user","x",paste0(n,section)), stringsAsFactors=F, colClasses=c("character","NULL","numeric"))
@@ -9,10 +9,10 @@ for (n in isilons) {
     j=aggregate(.~user,i,sum)
     k=merge(k,j,all=T)
 }
-for (n in c(2,3,4,5)) {
+for (n in c(2,3,4,5,6)) {
     k[ is.na(k[,n]), n] = 0
 }
-k[,paste0("total",section)]=apply(k,1,function(x){sum(as.numeric(x[2:5]))})
+k[,paste0("total",section)]=apply(k,1,function(x){sum(as.numeric(x[2:6]))})
 k$status=ifelse(grepl("^(NIH|UID|SID):",k$user,perl=T),"Unknown","Known")
 k$status[k$user=="TOTAL" | k$user=="Unknown"] = ""
 x=k[k$user!="TOTAL" & k$user!="Unknown",]
@@ -26,7 +26,8 @@ if (section != "" & file.exists("all.totals.csv")) {
     k=merge(k,j,all.x=T)
     k[,paste0("frac",section)]=apply(k,1,function(x){as.numeric(x[paste0("total",section)]) / as.numeric(x["total"])})
 }
-write.csv(k,file=paste0("all", section, ".totals.csv"),quote=F,row.names=F)
+write.csv(k[order(k[,paste0("total",section)], decreasing=T),],file=paste0("all", section, ".totals.csv"),quote=F,row.names=F)
+#write.csv(k,file=paste0("all", section, ".totals.csv"),quote=F,row.names=F)
 
 library(ggplot2)
 #library(reshape2)
