@@ -88,9 +88,14 @@ sub generate_single_report {
     my ($u, $rh_tot) = @_;
     my (%c,%t);
     for my $e (@Divs) {
-        $t{$e} = human_readable($rh_tot->{current}{$e}{$u}{total});
-        $c{$e} = pct_change($rh_tot->{previous}{$e}{$u}{total},
-                $rh_tot->{current}{$e}{$u}{total});
+        if ($rh_tot->{current}{$e}{$u}) {
+            $t{$e} = human_readable($rh_tot->{current}{$e}{$u}{total});
+            $c{$e} = pct_change($rh_tot->{previous}{$e}{$u}{total},
+                    $rh_tot->{current}{$e}{$u}{total});
+        }
+        else {
+            die "No data for user '$u'\n";
+        }
     }
     my $cdate = as_date($Opt{current});
     my $rpt = << "END_MSG";
