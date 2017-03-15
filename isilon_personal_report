@@ -64,10 +64,21 @@ for my $t (qw(current previous)) {
         concat_by_user($tot{$t}{details}, $f);
     }
 }
-my $rpt = generate_single_report($Opt{username}, \%tot);
-print $rpt;
 #my $rh_users = get_user_list();
 #generate_user_reports($rh_users, \%tot);
+my $rpt = generate_single_report($Opt{username}, \%tot);
+if ($Opt{email}) {
+    my $email = MIME::Lite->new(
+            From    => $Opt{from},
+            To      => "$Opt{username}\@mail.nih.gov",
+            Subject => "Draft Isilon Disk Usage Report",
+            Data    => $rpt,
+            );
+    $email->send();
+}
+else {
+    print $rpt;
+}
 
 #------------
 # End MAIN
@@ -91,7 +102,7 @@ This is a change of $c{totals} from the last reporting period.
 You currently are using $t{'home.totals'} in home directories on these Isilon
 systems ($c{'home.totals'}).
 
-Here is a current breakdown of where your files reside:
+Here is a breakdown of where your files currently reside:
 END_MSG
     for my $rh (@{ $rh_tot->{current}{details}{$u} }) {
         $rpt .= sprintf("%10s  %s\n", human_readable($rh->{used}), $rh->{path});
@@ -141,7 +152,9 @@ sub concat_by_user {
     my $iter = GTB::File::Iter->new( file => $file, fs => $COMMA,
             cols => [qw(user path used)] );
     while (my $rh = $iter->next_hash) {
-        push @{ $rh_user->{ $rh->{user} } }, $rh;
+        my $u = $rh->{user};
+        $u =~ s/^NIH\\//;
+        push @{ $rh_user->{$u} }, $rh;
     }
 }
 
@@ -152,9 +165,9 @@ sub get_user_list {
 sub process_commandline {
     # Set defaults here
     %Opt = (db          => 'storage',
-            from        => 'Peter Chines <pchines@mail.nih.gov>',
+            from        => 'pchines@mail.nih.gov',
             );
-    GetOptions(\%Opt, qw(current=s db=s from=s previous=s to=s username=s
+    GetOptions(\%Opt, qw(current=s db=s email from=s previous=s to=s username=s
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
