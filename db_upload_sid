@@ -1,0 +1,272 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use NHGRI::Db::Connector;
+use GTB::File::Iter;
+use Test::More;         # for is_deeply()
+
+our %Opt;
+our $Dbc;
+our $VERSION = '0.1';
+our $EMPTY = q{};
+
+# note order of columns matches REPLACE statement below
+our @REQUIRED_COLS = ("SID", "Username", "First Name", "Last Name");
+our %COL_MAP = (sid => "SID", username => "Username",
+        firstname => "First Name", lastname => "Last Name");
+# standard NIH ActiveDirectory prefix TODO: belongs in a library
+our $NIH_PREFIX = "S-1-5-21-12604286-656692736-1848903544";
+
+=head1 NAME
+
+db_upload_sid - update storage database with ActiveDirectory SIDs
+
+=head1 SYNOPSIS
+
+Update/insert SIDs from one or more files:
+
+  db_upload_sid User-SID-export-*.txt
+
+Update/insert single SID (NIH prefix is optional):
+
+  db_upload_sid -sid [S-1-5-21-12604286-656692736-1848903544-]2631 \
+      -u uid -f first -l last
+
+Erase existing record for specified SID:
+
+  db_upload_sid -erase -sid 2631
+
+For complete documentation, run C<db_upload_sid -man>
+
+=head1 DESCRIPTION
+
+Update storage database with SIDs from ActiveDirectory dumps.
+
+=cut
+
+#------------
+# Begin MAIN 
+#------------
+
+process_commandline();
+$Dbc = NHGRI::Db::Connector->new(-realm => $Opt{db},
+        -dbi_attrib  => {
+            RaiseError => 1,
+            PrintError => 0,
+            AutoCommit => 1,
+            },
+        );
+if ($Opt{sid}) {
+    if ($Opt{erase}) {
+        erase_sid($Opt{sid});
+    }
+    else {
+        insert_sid($Opt{sid}, $Opt{uid}, $Opt{first}, $Opt{last});
+    }
+}
+else {
+    for my $file (@ARGV) {
+        my $ra_sids = read_file($file);
+        update_sids($ra_sids);
+    }
+}
+
+#------------
+# End MAIN
+#------------
+
+sub read_file {
+    my ($file) = @_;
+    my @sids;
+    my $iter = GTB::File::Iter->new( file => $file );
+    my %cols;
+    @cols{ $iter->columns() } = undef;
+    my @miss = grep { !exists $cols{$_} } @REQUIRED_COLS;
+    if (@miss) {
+        warn "Error: $file is missing required columns: @miss\n";
+        warn "...skipping this file\n";
+        return [];
+    }
+    while (my $rh = $iter->next_hash) {
+        push @sids, $rh;
+    }
+    return \@sids;
+}
+
+sub update_sids {
+    my ($ra_sids) = @_;
+    my $dbh = $Dbc->connect();
+    my $sql;
+    if ($Opt{dryrun}) {
+        $sql = q/SELECT * FROM ad_users WHERE sid = ?/;
+    }
+    else {
+        $sql = q/REPLACE INTO ad_users (sid, username, firstname, lastname) VALUES (?,?,?,?)/;
+    }
+    my $replace = 0;
+    my $sth = $dbh->prepare($sql);
+    for my $rh (@$ra_sids) {
+        if ($Opt{dryrun}) {
+            $sth->execute($rh->{SID});
+            my $rh_db = $sth->fetchrow_hashref;
+            if ($rh_db) {
+                ++$replace;
+                while (my ($d,$c) = each %COL_MAP) {
+                    if ($rh_db->{$d} ne ($rh->{$c} || $EMPTY)) {
+                        print "\tDRYRUN $c change: '$rh_db->{$d}' -> '",
+                              $rh->{$c} || $EMPTY, "'\n";
+                    }
+                }
+            }
+        }
+        else {
+            my $rows = $sth->execute( map { $rh->{$_} } @REQUIRED_COLS );
+            if (!$rows) {
+                ++$replace;
+            }
+        }
+    }
+    if (!$Opt{quiet}) {
+        print "DRYRUN: would have " if $Opt{dryrun};
+        my $ins = @$ra_sids - $replace;
+        print "Inserted $ins new rows and Updated $replace rows\n";
+    }
+}
+
+sub insert_sid {
+    my ($s, $u, $f, $l) = @_;
+    update_sids([{ SID => $s, Username => $u,
+            "First Name" => $f, "Last Name" => $l }]);
+}
+
+sub erase_sid {
+    my ($sid) = @_;
+    my $dbh = $Dbc->connect();
+    my $sql;
+    if ($Opt{dryrun}) {
+        $sql = q/SELECT count(*) FROM ad_users WHERE sid = ?/;
+    }
+    else {
+        $sql = q/DELETE FROM ad_users WHERE sid = ?/;
+    }
+    my $sth = $dbh->prepare($sql);
+    my $rows = $sth->execute($sid);
+    if ($Opt{dryrun}) {
+        ($rows) = $sth->selectrow_array();
+        print "DRYRUN: would have erased $rows rows from the database\n";
+    }
+    elsif (!$Opt{quiet}) {
+        print "Erased $rows rows from the database\n";
+    }
+}
+
+sub process_commandline {
+    # Set defaults here
+    %Opt = (db          => 'storage',
+            );
+    GetOptions(\%Opt, qw(db=s dryrun|n erase first=s last=s
+                quiet sid=s uid|username=s
+                manual help+ version)) || pod2usage(0);
+    if ($Opt{manual})  { pod2usage(verbose => 2); }
+    if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
+    if ($Opt{version}) { die "db_upload_sid, version $VERSION\n"; }
+    # If non-option arguments are required, uncomment next line
+    if ($Opt{erase}) {
+        if (!$Opt{sid}) {
+            pod2usage("Must supply -sid with -erase option");
+        }
+        # TODO: consider erasing based on other data?
+    }
+    elsif ($Opt{sid} || $Opt{uid} || $Opt{first} || $Opt{last}) {
+        if (!$Opt{sid} || !$Opt{uid}) {
+            pod2usage("Must supply -sid and -uid in order to insert record.\n"
+                    . "Ideally, -first and -last names, as well.");
+        }
+    }
+    elsif (!@ARGV) {
+        pod2usage("Expected SID text files as input");
+    }
+    if ($Opt{sid}) {
+        if ($Opt{sid} =~ /^\d+$/) {
+            $Opt{sid} = "$NIH_PREFIX-$Opt{sid}";
+        }
+        elsif ($Opt{sid} !~ /^S(-\d+){7}$/) {
+            die "'$Opt{sid}' doesn't look like an SID\n";
+        }
+        if (@ARGV) {
+            warn "Files supplied when -sid option is used will be ignored\n";
+        }
+    }
+}
+
+__END__
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--db> storage
+
+Database realm to use to connect to the database.  The default realm name is
+"storage".  Having this realm file configured allows you to connect to the
+database with your own credentials, without having to manually supply a
+password every time.  See C<NHGRI::Db::Connector> for details.
+
+=item B<--erase>
+
+Deletes a record from the database; rarely expected to be needed.
+
+=item B<--first> Firstname
+
+First name of user associated with SID.
+
+=item B<--last> Lastname
+
+Last name of user associated with SID.
+
+=item B<--sid> S-1-5-21-12604286-656692736-1848903544-NNNN
+
+=item B<--sid> NNNN
+
+SID of specific user; use to insert or delete a single record.  If a simple
+integer is provided, the NIH ActiveDirectory prefix is assumed.
+
+=item B<--uid> username
+
+Username/login of user associated with SID.
+
+=item B<--help|--manual>
+
+Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
+all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 AUTHOR
+
+ Peter Chines - pchines@mail.nih.gov
+
+=head1 LEGAL
+
+This software/database is "United States Government Work" under the terms of
+the United States Copyright Act.  It was written as part of the authors'
+official duties for the United States Government and thus cannot be
+copyrighted.  This software/database is freely available to the public for
+use without a copyright notice.  Restrictions cannot be placed on its present
+or future use. 
+
+Although all reasonable efforts have been taken to ensure the accuracy and
+reliability of the software and data, the National Human Genome Research
+Institute (NHGRI) and the U.S. Government does not and cannot warrant the
+performance or results that may be obtained by using this software or data.
+NHGRI and the U.S.  Government disclaims all warranties as to performance,
+merchantability or fitness for any particular purpose. 
+
+In any work or product derived from this material, proper attribution of the
+authors as the source of the software or data should be made, using "NHGRI
+Information Technology Branch" as the citation. 
+
+=cut
