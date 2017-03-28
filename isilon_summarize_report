@@ -11,6 +11,7 @@ use GTB::File::Iter;
 our %Opt;
 our $Dbc;
 our $EMPTY = q{};
+our $SPACE = q{ };
 our $COMMA = q{,};
 # NIH ActiveDirectory prefix
 our $NIH_PREFIX = "S-1-5-21-12604286-656692736-1848903544";
@@ -77,8 +78,16 @@ sub create_iterator {
     }
 }
 
+sub get_user_info {
+    my $dbh = $Dbc->connect();
+    my $sql = q/SELECT * FROM ad_users/;
+    my $rh_user = $dbh->selectall_hashref($sql, 'username');
+    return $rh_user;
+}
+
 sub report_totals {
     my ($rh_ud, $path) = @_;
+    my $rh_user = get_user_info();
     my $ofh = Open($Opt{output}, 'w');
     my $dfh = $Opt{details} ? Open($Opt{details}, 'w') : undef;
     my $total = 0;
@@ -86,6 +95,7 @@ sub report_totals {
     my %user;
     for my $u (keys %$rh_ud) {
         my $rh_u = $rh_ud->{$u};
+        my $rh_info = $rh_user->{$u} || {};
         my @dirs = sort grep { !/^__/ } keys %$rh_u;
         while (@dirs) {
             my $d = shift @dirs;
@@ -100,8 +110,11 @@ sub report_totals {
                 @dirs = grep { !/^$d/ } @dirs
             }
         }
-        print $ofh join($COMMA, $u, "TOTAL",
-                sprintf($Opt{numeric}, $user{$u})), "\n";
+        print $ofh join($COMMA, $u, join($SPACE,
+                    $rh_info->{firstname} || $EMPTY,
+                    $rh_info->{lastname} || $EMPTY),
+                sprintf($Opt{numeric}, $user{$u}),
+                ), "\n";
         if ($u =~ /^(UID|SID|NIH):/) {
             $unk += $user{$u};
         }
@@ -119,7 +132,7 @@ sub add_user_dir {
     if ($rh->{Type} ne 'user') {
         return;
     }
-    my $user =$rh->{AppliesTo};
+    my $user = $rh->{AppliesTo};
     if ($rh->{AppliesTo} =~ /^UID:(\d+)/) {
         my $uid = $1;
         my $uname;
@@ -145,6 +158,9 @@ sub add_user_dir {
     }
     elsif ($rh->{AppliesTo} =~ /^SID:$NIH_PREFIX-(\d+)$/) {
         $user = "NIH:$1";
+    }
+    elsif ($rh->{AppliesTo} =~ /^NIH\\(\w+)$/) {
+        $user = $1;
     }
     if ($rh_ud->{$user}{__ID__}
             && $rh_ud->{$user}{__ID__} ne $rh->{AppliesTo}) {
