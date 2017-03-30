@@ -7,7 +7,8 @@ u=data.frame(user=character(0), fullname=character(0))
 for (n in isilons) {
     nm=paste0(n,section)
     i=read.table(paste0(nm,".csv"), header=F, sep=",",
-            col.names=c("user","fullname",nm), stringsAsFactors=F, colClasses=c("character","character","numeric"))
+            col.names=c("user","fullname",nm), stringsAsFactors=F,
+            colClasses=c("character","character","numeric"), quote="")
     i$user=gsub("^NIH\\\\","",i$user)
     j=aggregate(.~user,i[,c("user",nm)],sum)
     k=merge(k,j,all=T)
