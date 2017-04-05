@@ -123,6 +123,14 @@ sub read_file {
         my @d = split $COMMA, $_, -1;
         my %r;
         @r{@c} = @d;
+        if ($r{"Last Modified"}) {
+            if ($r{"Last Modified"} =~ m{^(\d\d?)/(\d\d?)/(\d{4})}) {
+                $r{"Last Modified"} = sprintf("%d-%02d-%02d", $3, $1, $2);
+            }
+            else {
+                warn "Can't parse Last Modified date: " . $r{"Last Modified"};
+            }
+        }
         push @sids, \%r;
     }
     return (\@sids, $type);
