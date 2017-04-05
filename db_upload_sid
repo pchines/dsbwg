@@ -5,18 +5,21 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 use NHGRI::Db::Connector;
-use GTB::File::Iter;
-use Test::More;         # for is_deeply()
+use GTB::File qw(Open);
 
 our %Opt;
 our $Dbc;
-our $VERSION = '0.1';
+our $VERSION = '0.2';
 our $EMPTY = q{};
+our $COMMA = q{,};
 
 # note order of columns matches REPLACE statement below
-our @REQUIRED_COLS = ("SID", "Username", "First Name", "Last Name");
+our @REQUIRED_COLS = ("SID", "Username", "First Name", "Last Name",
+        "Email Address", "NIH SAC");
 our %COL_MAP = (sid => "SID", username => "Username",
-        firstname => "First Name", lastname => "Last Name");
+        firstname => "First Name", lastname => "Last Name",
+        email => "Email Address", nih_sac => "NIH SAC",
+        as_of_date => "Last Modified");
 # standard NIH ActiveDirectory prefix TODO: belongs in a library
 our $NIH_PREFIX = "S-1-5-21-12604286-656692736-1848903544";
 
@@ -28,7 +31,7 @@ db_upload_sid - update storage database with ActiveDirectory SIDs
 
 Update/insert SIDs from one or more files:
 
-  db_upload_sid User-SID-export-*.txt
+  db_upload_sid ActiveUsers-XXX.csv [InactiveUsers-XXX.csv ...]
 
 Update/insert single SID (NIH prefix is optional):
 
@@ -64,13 +67,13 @@ if ($Opt{sid}) {
         erase_sid($Opt{sid});
     }
     else {
-        insert_sid($Opt{sid}, $Opt{uid}, $Opt{first}, $Opt{last});
+        insert_sid(\%Opt);
     }
 }
 else {
     for my $file (@ARGV) {
-        my $ra_sids = read_file($file);
-        update_sids($ra_sids);
+        my ($ra_sids, $type) = read_file($file);
+        update_sids($ra_sids, $type);
     }
 }
 
@@ -80,31 +83,62 @@ else {
 
 sub read_file {
     my ($file) = @_;
+    my $type = $EMPTY;
+    if ($file =~ /Inactive/i) {
+        $type = "inactive";
+    }
+    elsif ($file =~ /Active/i) {
+        $type = "active";
+    }
+    elsif ($file =~ /AA/) {
+        $type = "admin";
+    }
+    if ($Opt{type}) {
+        if ($type) {
+            warn "Overriding imputed user_type $type for file $file\n"
+                . "with specified $Opt{type}\n";
+        }
+        $type = $Opt{type};
+    }
+    if (!$type) {
+        warn "No user_type determined for $file; please specify with -type\n";
+    }
     my @sids;
-    my $iter = GTB::File::Iter->new( file => $file );
+    my $ifh = Open($file);
+    my $head = <$ifh>;
+    $head =~ s/\r?\n$//;
+    $head =~ s/"//g;
+    my @c = split $COMMA, $head;
     my %cols;
-    @cols{ $iter->columns() } = undef;
+    @cols{@c} = undef;
     my @miss = grep { !exists $cols{$_} } @REQUIRED_COLS;
     if (@miss) {
         warn "Error: $file is missing required columns: @miss\n";
         warn "...skipping this file\n";
         return [];
     }
-    while (my $rh = $iter->next_hash) {
-        push @sids, $rh;
+    while (<$ifh>) {
+        s/\r?\n$//;
+        s/"//g;
+        my @d = split $COMMA, $_, -1;
+        my %r;
+        @r{@c} = @d;
+        push @sids, \%r;
     }
-    return \@sids;
+    return (\@sids, $type);
 }
 
 sub update_sids {
-    my ($ra_sids) = @_;
+    my ($ra_sids, $type) = @_;
     my $dbh = $Dbc->connect();
     my $sql;
     if ($Opt{dryrun}) {
         $sql = q/SELECT * FROM ad_users WHERE sid = ?/;
     }
     else {
-        $sql = q/REPLACE INTO ad_users (sid, username, firstname, lastname) VALUES (?,?,?,?)/;
+        $sql = q/REPLACE INTO ad_users (sid, username, firstname, lastname,
+                    email, nih_sac, as_of_date, user_type)
+                 VALUES (?,?,?,?, ?,?,?,?)/;
     }
     my $replace = 0;
     my $sth = $dbh->prepare($sql);
@@ -123,8 +157,10 @@ sub update_sids {
             }
         }
         else {
-            my $rows = $sth->execute( map { $rh->{$_} } @REQUIRED_COLS );
-            if (!$rows) {
+            my $rows = $sth->execute(
+                    (map { $rh->{$_} } @REQUIRED_COLS, "Last Modified"),
+                    $type);
+            if ($rows > 1) {
                 ++$replace;
             }
         }
@@ -137,9 +173,11 @@ sub update_sids {
 }
 
 sub insert_sid {
-    my ($s, $u, $f, $l) = @_;
-    update_sids([{ SID => $s, Username => $u,
-            "First Name" => $f, "Last Name" => $l }]);
+    my ($rh) = @_;
+    update_sids([{ SID => $rh->{sid}, Username => $rh->{uid},
+            "First Name" => $rh->{first}, "Last Name" => $rh->{last},
+            "Email Address" => $rh->{mail}, "NIH SAC" => $rh->{sac},
+            }]);
 }
 
 sub erase_sid {
@@ -167,8 +205,8 @@ sub process_commandline {
     # Set defaults here
     %Opt = (db          => 'storage',
             );
-    GetOptions(\%Opt, qw(db=s dryrun|n erase first=s last=s
-                quiet sid=s uid|username=s
+    GetOptions(\%Opt, qw(db=s dryrun|n erase first=s last=s mail=s
+                quiet sac=s sid=s type=s uid|username=s
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -233,6 +271,10 @@ Last name of user associated with SID.
 
 SID of specific user; use to insert or delete a single record.  If a simple
 integer is provided, the NIH ActiveDirectory prefix is assumed.
+
+=item B<--type> active | inactive | admin
+
+Explicitly specify user_type; typically imputed based on file name.
 
 =item B<--uid> username
 
