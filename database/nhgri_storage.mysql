@@ -24,12 +24,81 @@ DROP TABLE IF EXISTS `ad_users`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `ad_users` (
   `sid` varchar(50) NOT NULL,
-  `username` varchar(15) NOT NULL,
+  `username` varchar(30) NOT NULL,
   `firstname` varchar(25) NOT NULL DEFAULT '',
   `lastname` varchar(25) NOT NULL DEFAULT '',
+  `email` varchar(50) NOT NULL DEFAULT '',
+  `nih_sac` varchar(8) NOT NULL DEFAULT 'HN4',
+  `user_type` varchar(8) NOT NULL DEFAULT '',
+  `as_of_date` date DEFAULT NULL,
   PRIMARY KEY (`sid`),
-  UNIQUE KEY `iu_username` (`username`)
+  KEY `i_username` (`username`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `ad_users_old`
+--
+
+--
+-- Table structure for table `archive_tapes`
+--
+
+DROP TABLE IF EXISTS `archive_tapes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `archive_tapes` (
+  `tape_id` int(11) NOT NULL AUTO_INCREMENT,
+  `barcode` varchar(32) NOT NULL,
+  `archive_id` int(11) NOT NULL,
+  `copy_no` tinyint(4) NOT NULL DEFAULT '0',
+  `sequence_no` smallint(6) NOT NULL DEFAULT '0',
+  `tape_type` varchar(16) NOT NULL DEFAULT 'LTO6',
+  `write_date` date NOT NULL,
+  `expire_date` date NOT NULL,
+  `location` varchar(255) NOT NULL DEFAULT '',
+  PRIMARY KEY (`tape_id`),
+  UNIQUE KEY `iu_barcode` (`barcode`),
+  KEY `i_archive_id` (`archive_id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `archives`
+--
+
+DROP TABLE IF EXISTS `archives`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `archives` (
+  `archive_id` int(11) NOT NULL AUTO_INCREMENT,
+  `request_by` varchar(30) NOT NULL,
+  `request_date` date NOT NULL,
+  `user_host` varchar(30) NOT NULL COMMENT 'host or drive user sees',
+  `user_folder` varchar(2048) NOT NULL COMMENT 'path users sees',
+  `description` text NOT NULL COMMENT 'description of content',
+  `sensitive` tinyint(4) NOT NULL DEFAULT '0' COMMENT '1=contains sensitive info or PII, 2=removed, 3=encrypted',
+  `permanent` tinyint(4) NOT NULL DEFAULT '0' COMMENT '1=may contain official records kept indefinitely, 2=confirmed',
+  `publication` text COMMENT 'related publications',
+  `curr_status` varchar(30) NOT NULL DEFAULT 'new' COMMENT 'new, checked, notified, ready, staged, complete, cancelled, destroyed',
+  `inc_prepare` char(11) NOT NULL DEFAULT '' COMMENT 'incident ticket number to track preparation of request',
+  `real_host` varchar(30) DEFAULT NULL COMMENT 'host, as seen by storage team',
+  `real_path` varchar(2048) DEFAULT NULL COMMENT 'full path to directory, as seen by storage team',
+  `archive_check` date DEFAULT NULL COMMENT 'date program run by Storage Team, and issues resolved',
+  `size` float DEFAULT NULL COMMENT 'total size of files, in bytes',
+  `notify_users` date DEFAULT NULL COMMENT 'date users notified of impending removal',
+  `inc_archive` char(11) NOT NULL DEFAULT '' COMMENT 'incident ticket number to track creation of archive',
+  `staged_to` varchar(1024) DEFAULT NULL COMMENT 'where directory is moved to (same host/filesystem)',
+  `staged_date` date DEFAULT NULL COMMENT 'date data is moved to staging area (start quarantine period)',
+  `delete_date` date DEFAULT NULL COMMENT 'date staged data is removed from disk',
+  `notes` text COMMENT 'storage team notes regarding this archive',
+  `dir_info` blob COMMENT 'compressed data: directory permissions from archive_check',
+  `file_info` blob COMMENT 'compressed data: file size and permissions from archive_check',
+  PRIMARY KEY (`archive_id`),
+  KEY `i_request_by` (`request_by`),
+  KEY `i_request_date` (`request_date`),
+  KEY `i_status` (`curr_status`)
+) ENGINE=MyISAM AUTO_INCREMENT=28 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -51,6 +120,41 @@ CREATE TABLE `isilon_info` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `isilon_mounts`
+--
+
+DROP TABLE IF EXISTS `isilon_mounts`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `isilon_mounts` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `isilon` varchar(50) NOT NULL,
+  `exported` varchar(1024) NOT NULL,
+  `host` varchar(50) NOT NULL,
+  `mounted` varchar(1024) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `i_isilon` (`isilon`,`host`),
+  KEY `i_host` (`host`)
+) ENGINE=MyISAM AUTO_INCREMENT=58 DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `unix_passwd`
+--
+
+DROP TABLE IF EXISTS `unix_passwd`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `unix_passwd` (
+  `host` varchar(50) NOT NULL,
+  `uid` int(11) NOT NULL,
+  `username` varchar(50) NOT NULL,
+  PRIMARY KEY (`host`,`uid`),
+  KEY `i_user` (`username`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `user_info`
 --
 
@@ -66,6 +170,40 @@ CREATE TABLE `user_info` (
   PRIMARY KEY (`username`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `user_total_versions`
+--
+
+DROP TABLE IF EXISTS `user_total_versions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `user_total_versions` (
+  `as_of` date NOT NULL,
+  `version` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`as_of`),
+  UNIQUE KEY `iu_version` (`version`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `user_totals`
+--
+
+DROP TABLE IF EXISTS `user_totals`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `user_totals` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `as_of` date NOT NULL,
+  `username` varchar(255) NOT NULL,
+  `used` float NOT NULL DEFAULT '0',
+  `isilon` varchar(25) NOT NULL DEFAULT 'TOTAL',
+  `area` varchar(25) NOT NULL DEFAULT 'TOTAL',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `iu_user_date_area` (`username`,`as_of`,`isilon`,`area`)
+) ENGINE=MyISAM AUTO_INCREMENT=26488 DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -76,4 +214,4 @@ CREATE TABLE `user_info` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2016-11-30 11:58:13
+-- Dump completed on 2017-04-19 14:09:51
