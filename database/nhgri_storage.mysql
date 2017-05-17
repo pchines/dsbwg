@@ -85,8 +85,8 @@ CREATE TABLE `archives` (
   `staged_date` date DEFAULT NULL COMMENT 'date data is moved to staging area (start quarantine period)',
   `delete_date` date DEFAULT NULL COMMENT 'date staged data is removed from disk',
   `notes` text COMMENT 'storage team notes regarding this archive',
-  `dir_info` blob COMMENT 'compressed data: directory permissions from archive_check',
-  `file_info` blob COMMENT 'compressed data: file size and permissions from archive_check',
+  `dir_info` longblob COMMENT 'compressed data: directory permissions from archive_check',
+  `file_info` longblob COMMENT 'compressed data: file size and permissions from archive_check',
   PRIMARY KEY (`archive_id`),
   KEY `i_request_by` (`request_by`),
   KEY `i_request_date` (`request_date`),
@@ -106,6 +106,7 @@ CREATE TABLE `isilon_info` (
   `in_use` double DEFAULT NULL,
   `as_of` date DEFAULT NULL,
   `id` int(11) NOT NULL AUTO_INCREMENT,
+  `version` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `iu_isilon_dt` (`isilon`,`as_of`)
 ) ENGINE=MyISAM AUTO_INCREMENT=6 DEFAULT CHARSET=latin1;
@@ -230,4 +231,4 @@ CREATE TABLE `user_totals` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-05-16 16:09:03
+-- Dump completed on 2017-05-17 12:39:52
