@@ -64,7 +64,7 @@ for my $file (@ARGV) {
     }
     warn_missing_exports($rh_mnt, $serv);
 }
-report_totals(\%user_dir, $Opt{path});
+report_totals(\%user_dir, $rh_mnt, $Opt{path});
 
 sub create_iterator {
     my ($file) = @_;
@@ -89,7 +89,7 @@ sub get_user_info {
 }
 
 sub report_totals {
-    my ($rh_ud, $path) = @_;
+    my ($rh_ud, $rh_mnt, $path) = @_;
     my $rh_user = get_user_info();
     my $ofh = Open($Opt{output}, 'w');
     my $dfh = $Opt{details} ? Open($Opt{details}, 'w') : undef;
@@ -103,11 +103,14 @@ sub report_totals {
         while (@dirs) {
             my $d = shift @dirs;
             my $used = $rh_u->{$d};
+            my ($isilon, $dir) = split /:/, $d;
             if (defined $used) {
                 $user{$u} += $used;
                 if ($Opt{details}) {
+                    my $ra_mnt = mounted_as($rh_mnt, $isilon, $dir);
                     print $dfh join($COMMA, $u, $d,
-                            sprintf($Opt{numeric}, $used)), "\n";
+                            sprintf($Opt{numeric}, $used),
+                            join("|", @$ra_mnt)), "\n";
                 }
                 # have total, so exclude subdirs
                 @dirs = grep { !/^$d/ } @dirs
@@ -217,6 +220,19 @@ sub warn_missing_exports {
             warn "Warning: no quotas found for export $serv:$exp\n";
         }
     }
+}
+
+sub mounted_as {
+    my ($rh_mnt, $serv, $path) = @_;
+    my @m;
+    for my $exp (reverse sort keys %{ $rh_mnt->{$serv} }) {
+        if ($exp =~ /^$path/) {
+            for my $h (sort keys %{ $rh_mnt->{$serv}{$exp} }) {
+                push @m, "$h:" . $rh_mnt->{$serv}{$exp}{$h}{mount_point};
+            }
+        }
+    }
+    return \@m;
 }
 
 sub which_hosts {
