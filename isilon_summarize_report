@@ -54,6 +54,9 @@ for my $file (@ARGV) {
         if ($Opt{filter} && $rh->{Path} !~ /$Opt{filter}/o) {
             next;
         }
+        if ($rh->{Snap} eq 'Yes') {
+            next;
+        }
         $serv_hosts{$serv}{$rh->{Path}}
             ||= which_hosts($rh_mnt, $serv, $rh->{Path});
         add_user_dir($rh, \%user_dir, $serv, $rh_host,
