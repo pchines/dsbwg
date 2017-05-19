@@ -1,0 +1,355 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use File::Spec;
+use NHGRI::Db::Connector;
+use GTB::File qw(Open);
+use GTB::Run qw(as_number);
+our %Opt;
+our $Dbc;
+our $VERSION = '0.1';
+our $EMPTY = q{};
+our $MAX_FILE_SIZE = 1024 * 1024 * 16;
+our @Required =qw(user_host user_path size real_host real_path);
+
+=head1 NAME
+
+archive_check_complete - update database to indicate dir has been checked
+
+=head1 SYNOPSIS
+
+To be run after archive_check is run and reviewed carefully.
+
+Update database for Archive Request #27:
+
+  archive_check_complete -ar 27 /path/to/DIR.info.txt
+
+For complete documentation, run C<archive_check_complete -man>
+
+=head1 DESCRIPTION
+
+Check and update database:
+
+ - confirm basename of directory is right
+ - update status from "new" to "checked"
+ - set total size of archive
+ - set check_date to today, indicating completion
+ - add current user to history/notes ?
+ - set real_host and real_path, based on mount point
+ - upload files and dirs to database
+
+=cut
+
+#------------
+# Begin MAIN 
+#------------
+
+process_commandline();
+$Dbc = NHGRI::Db::Connector->new(-realm => $Opt{db});
+my $req = get_archive_request($Opt{archive_id});
+my $rh_stats = read_stats($ARGV[0]);
+update_status($req,
+        status_from   => "new",
+        status_to     => "checked",
+        archive_check => $Opt{date},
+        notes_add     => "$Opt{username} ran archive_check_complete\n",
+        map { $_ => $rh_stats->{$_} } qw(size real_host real_path files_file dirs_file),
+        );
+if ($Opt{upload}) {
+    upload($req, $rh_stats->{files_file}, "file_info");
+    upload($req, $rh_stats->{dirs_file}, "dir_info");
+}
+
+#------------
+# End MAIN
+#------------
+
+sub get_archive_request {
+    my ($id) = @_;
+    my $dbh = $Dbc->connect();
+    my $ra = $dbh->selectall_arrayref(q/
+            SELECT * FROM archives WHERE archive_id = ? and curr_status <> 'cancelled'
+            /, {Slice => {}}, $id);
+    if (@$ra != 1) {
+        die "Error retrieving archive request #$id: "
+            . ($dbh->errstr ? $dbh->errstr : "record not found")
+            . "\n";
+    }
+    return $ra->[0];
+}
+
+sub update_status {
+    my ($ar, %p) = @_;
+    my $warn;
+    if ($ar->{curr_status} ne $p{status_from}) {
+        warn "Expected before status '$p{status_from}', got '$ar->{curr_status}'\n";
+        confirm("Proceed");
+    }
+    if (!similar_ending($ar->{user_folder}, $p{real_path})) {
+        die "Archive request #$ar->{archive_id} refers to path '$ar->{user_folder}', while this INFO file is from '$p{real_path}'.\nAborting.\n";
+    }
+
+    my $sql = "UPDATE archives SET curr_status = ?";
+    my @f = ("status_to");
+    my $msg = "Preparing update for Archive Request #$ar->{archive_id}:\n";
+    $msg .= "\tChange status from '$p{status_from}' to '$p{status_to}'\n";
+    for my $k (sort keys %p) {
+        next if $k =~ /^status_(to|from)/;
+        if ($k eq "notes_add") {
+            $msg .= "\tAdd '$p{$k}' to notes\n";
+            $sql .= ", notes = CONCAT(notes,?)";
+            push @f, "notes_add";
+        }
+        elsif ($k =~ /^(\w+)_file$/) {
+            if ($Opt{upload}) {
+                $msg .= "\tSet ${1}_info to contents of $p{$k}\n";
+            }
+        }
+        else {
+            $msg .= "\tSet $k to '$p{$k}'\n";
+            $sql .= ", $k = ?";
+            push @f, $k;
+        }
+    }
+    $msg .= "Proceed";
+    $sql .= " WHERE archive_id = ? AND curr_status = ?";
+    confirm($msg, "Y");
+    my $dbh = $Dbc->connect();
+    my $sth = $dbh->prepare($sql);
+    my $rv = $sth->execute(
+            (map { $p{$_} } @f), $ar->{archive_id}, $ar->{curr_status} );
+    return $rv+0;
+}
+
+sub upload {
+    my ($ar, $file, $col) = @_;
+    my $id = $ar->{archive_id} || die "Missing archive ID";
+    my $dbh = $Dbc->connect();
+    my $rs_content = slurp_file($file);
+    #TODO MD5
+    my $sth = $dbh->prepare(
+            qq/UPDATE archives SET $col = ? WHERE archive_id = ?/);
+    my $rv = $sth->execute($$rs_content, $ar->{archive_id});
+    return $rv+0;
+}
+
+sub slurp_file {
+    my ($file) = @_;
+    my $size = -s $file;
+    if ($size > $MAX_FILE_SIZE) {
+        warn "WARNING: $file is larger than maximum allowed size\n";
+    }
+    my $fh = Open($file);
+    local $/;
+    my $data = <$fh>;
+    return \$data;
+}
+
+sub similar_ending {
+    my ($p1, $p2) = @_;
+    my @a = File::Spec->splitdir($p1);
+    my @b = File::Spec->splitdir($p2);
+    return $a[-1] eq $b[-1];
+}
+
+sub read_stats {
+    my ($ifile) = @_;
+    my %stats;
+    my $pre = $ifile;
+    if ($pre !~ s/\.info\.txt(?:\.gz)?$//) {
+        die "Invalid input file name; should be output '<PREFIX>.info.txt'"
+            . " file\nfrom archive_check program.\n";
+    }
+    if ($Opt{upload} && !(-f "$pre.files.txt.gz" && -f "$pre.dirs.txt.gz")) {
+        die "Missing $pre.files.txt.gz or $pre.dirs.txt.gz\n"
+            . "These files must be in same directory as $ifile\n";
+    }
+    $stats{files_file} = "$pre.files.txt.gz";
+    $stats{dirs_file}  = "$pre.dirs.txt.gz";
+    my $ifh = Open($ifile);
+    while (<$ifh>) {
+        if (/^Pre-archive report for ([\w.-]+):(.+)/) {
+            my ($h, $p) = ($1, $2);
+            if ($h =~ /k\w+\.gc\.nih\.gov/) {
+                $h = "trek";
+            }
+            if ($h =~ /^(ghead\d+|gryphon-\w+|gry-compute\d+)\.core\.nhgri\.nih\.gov/) {
+                $h = "gryphon";
+            }
+            $stats{user_host} = $h;
+            $stats{user_path} = $p;
+            set_real_path(\%stats, $h, $p);
+        }
+        elsif (/Total size of files:\s+([\d.]+[KMGTP]?)$/) {
+            $stats{size} = as_number($1);
+            last;
+        }
+    }
+    my @miss = grep { !exists $stats{$_} } @Required;
+    if (@miss) {
+        warn "Missing expected information in $ifile: "
+            . join(", ", @miss) . "\n";
+        #TODO: ask_continue();
+    }
+    return \%stats;
+}
+
+sub set_real_path {
+    my ($rh_s, $h, $p) = @_;
+    if ($Opt{translate} && $Opt{translate} =~ /^([^=]+)=([^=]+)/) {
+        my ($src, $dst) = ($1, $2);
+        if ($p !~ s/^$src/$dst/) {
+            warn "Translation $Opt{translate} of $p failed\n";
+        }
+    }
+    my ($real_h, $export, $mount) = get_mount($p);
+    if (!$mount) {
+        warn "Can't find local mount matching $p\n";
+    }
+    elsif ($p !~ s/^$mount/$export/) {
+        warn "Error translating path based on $mount = $export\n";
+    }
+    $rh_s->{real_host} = $Opt{host} || $real_h || $h;
+    $rh_s->{real_path} = $Opt{path} || $p;
+}
+
+sub get_mount {
+    my ($p) = @_;
+    my ($mh, $ex, $mp);
+    my @o = `df -h $p`;
+    if ($o[1] =~ /^([\w\.]+):(\S+)/) {
+        $mh = $1;
+        $ex = $2;
+        if ($o[2] =~ /(\S+)$/) {
+            $mp = $1;
+        }
+    }
+    return ($mh, $ex, $mp);
+}
+
+sub today {
+    my @t = localtime();
+    return sprintf("%d-%02d-%02d", $t[5]+1900, $t[4]+1, $t[3]);
+}
+
+sub ask {
+    my ($msg, $default) = @_;
+    print STDERR "$msg ";
+    my $resp = <STDIN>;
+    chomp $resp;
+    if ($resp eq $EMPTY) {
+        $resp = $default;
+    }
+    return $resp;
+}
+
+sub confirm {
+    my ($msg, $default) = @_;
+    $default ||= "N";
+    my $choices = $default eq "N" ? "y/N" : "Y/n";
+    my $resp = ask("$msg? [$choices]", $default);
+    my $ok = $resp =~ /^Y/i;
+    if (!$ok) {
+        die "Aborting at user request.\n";
+    }
+    return $ok;
+}
+
+sub process_commandline {
+    # Set defaults here
+    %Opt = (date        => today(),
+            db          => 'storage',
+            upload      => 1,
+            username    => $ENV{USER},
+            );
+    GetOptions(\%Opt, qw(archive_id=i date=s db=s dryrun host=s incident=s
+                path=s translate=s upload! username|u=s
+                manual help+ version)) || pod2usage(0);
+    if ($Opt{manual})  { pod2usage(verbose => 2); }
+    if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
+    if ($Opt{version}) { die "archive_check_complete, version $VERSION\n"; }
+    # If non-option arguments are required, uncomment next line
+    if (@ARGV != 1) {
+        pod2usage("Expect single archive_check INFO file as input");
+    }
+    if (!$Opt{archive_id}) {
+        pod2usage("Archive ID is required");
+    }
+}
+
+__END__
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--archive_id> N
+
+Required.  Database ID for this archive request.
+
+=item B<--db> realm
+
+Database realm to use to connect to the database.  The default realm name is
+"storage".  Having this realm file configured allows you to connect to the
+database with your own credentials, without having to manually supply a
+password every time.  See C<NHGRI::Db::Connector> for details.
+
+=item B<--dryrun>
+
+Don't update database, just indicate what would be done.
+
+=item B<--host> REALHOST
+
+Hostname to use for real_host column.
+
+=item B<--incident> INCXXXXXXX
+
+Incident ticket number associated with the "preparation" phase of thie
+archive request.  If provided, will update the inc_prep database column with
+this value.
+
+=item B<--noupload>
+
+By default, this script uploads a copy of the "PREFIX.files.txt.gz" and
+"PREFIX.dirs.txt.gz" to the database.  This option prevents that,
+
+=item B<--path> /real/path
+
+Path to use for real_path column.  It is usually best to let the program
+figure this out, based on filesystem mounts.
+
+=item B<--help|--manual>
+
+Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
+all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 AUTHOR
+
+ Peter Chines - pchines@mail.nih.gov
+
+=head1 LEGAL
+
+This software/database is "United States Government Work" under the terms of
+the United States Copyright Act.  It was written as part of the authors'
+official duties for the United States Government and thus cannot be
+copyrighted.  This software/database is freely available to the public for
+use without a copyright notice.  Restrictions cannot be placed on its present
+or future use. 
+
+Although all reasonable efforts have been taken to ensure the accuracy and
+reliability of the software and data, the National Human Genome Research
+Institute (NHGRI) and the U.S. Government does not and cannot warrant the
+performance or results that may be obtained by using this software or data.
+NHGRI and the U.S.  Government disclaims all warranties as to performance,
+merchantability or fitness for any particular purpose. 
+
+In any work or product derived from this material, proper attribution of the
+authors as the source of the software or data should be made, using "NHGRI
+Information Technology Branch" as the citation. 
+
+=cut
