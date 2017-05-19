@@ -3,16 +3,23 @@ args=commandArgs(trailingOnly = T)
 section=ifelse(length(args)>0, paste0(".",args[1]), "")
 isilons=c("bo","centaur","ketu","spock","wyvern")
 k=data.frame(user=character(0))
-u=data.frame(user=character(0), fullname=character(0))
+u=data.frame(user=character(0), fullname=character(0), org_code=character(0))
 for (n in isilons) {
+    cat(n,"\n")
     nm=paste0(n,section)
-    i=read.table(paste0(nm,".csv"), header=F, sep=",",
+    i=read.table(paste0(nm,".csv"), header=F, sep=",", nrows=1)
+    if (length(i) > 3 | names(i)[1] == "user") {
+        i=read.table(paste0(nm,".csv"), header=T, sep=",", quote='"')
+        names(i) = sub("^total$", nm, names(i))
+    } else {
+        i=read.table(paste0(nm,".csv"), header=F, sep=",",
             col.names=c("user","fullname",nm), stringsAsFactors=F,
-            colClasses=c("character","character","numeric"), quote="")
+            colClasses=c("character","character","numeric"), quote='"')
+    }
     i$user=gsub("^NIH\\\\","",i$user)
     j=aggregate(.~user,i[,c("user",nm)],sum)
     k=merge(k,j,all=T)
-    u=rbind(u, i[,c("user","fullname")])
+    u=rbind(u, i[,c("user","fullname","org_code")])
 }
 end=length(isilons)+1
 for (n in c(2:end)) {
@@ -24,7 +31,7 @@ k$status[k$user=="TOTAL" | k$user=="Unknown"] = ""
 x=k[k$user!="TOTAL" & k$user!="Unknown",]
 table(x$status)
 
-k=merge(k, unique(u))
+k=merge(k, unique(u), all.x=T)
 k$fullname[k$user=="TOTAL"]="TOTAL of all users"
 k$fullname[k$user=="Unknown"]="TOTAL of unknown users"
 if (section != "" & file.exists("all.totals.csv")) {

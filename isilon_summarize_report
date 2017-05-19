@@ -57,7 +57,7 @@ for my $file (@ARGV) {
         if ($Opt{filter} && $rh->{Path} !~ /$Opt{filter}/o) {
             next;
         }
-        if ($rh->{Snap} eq 'Yes') {
+        if ($rh->{Snap} && $rh->{Snap} eq 'Yes') {
             next;
         }
         $serv_hosts{$serv}{$rh->{Path}}
@@ -114,6 +114,7 @@ sub lookup_sid {
 sub report_totals {
     my ($rh_ud, $rh_mnt, $path) = @_;
     my $ofh = Open($Opt{output}, 'w');
+    print $ofh join($COMMA, qw(user fullname org_code total)), "\n";
     my $dfh = $Opt{details} ? Open($Opt{details}, 'w') : undef;
     my $total = 0;
     my $unk = 0;
@@ -141,6 +142,7 @@ sub report_totals {
         print $ofh join($COMMA, $u, join($SPACE,
                     $rh_info->{firstname} || $EMPTY,
                     $rh_info->{lastname} || $EMPTY),
+                $rh_info->{nih_sac} || $EMPTY,
                 sprintf($Opt{numeric}, $user{$u}),
                 ), "\n";
         if ($u =~ /^(UID|SID|NIH):/) {
@@ -149,9 +151,9 @@ sub report_totals {
         $total += $user{$u};
     }
     # report totals
-    print $ofh join($COMMA, "Unknown", $EMPTY,
+    print $ofh join($COMMA, "Unknown", "NA", "NA",
             sprintf($Opt{numeric}, $unk)), "\n";
-    print $ofh join($COMMA, "TOTAL", $EMPTY,
+    print $ofh join($COMMA, "TOTAL", "NA", "NA",
             sprintf($Opt{numeric}, $total)), "\n";
 }
 
