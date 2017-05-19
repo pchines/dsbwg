@@ -15,6 +15,8 @@ our $SPACE = q{ };
 our $COMMA = q{,};
 # NIH ActiveDirectory prefix
 our $NIH_PREFIX = "S-1-5-21-12604286-656692736-1848903544";
+our $Rh_Sid;    # user info, keyed by SID
+our $Rh_User;   # user info, keyed by username
 
 =head1 NAME
 
@@ -40,6 +42,7 @@ $Dbc = NHGRI::Db::Connector->new(-realm => $Opt{db}, -dbi_attrib => {
         PrintError => 0,
         AutoCommit => 1,
         });
+($Rh_Sid, $Rh_User) = get_user_info();
 my $rh_mnt  = read_isilon_mounts();
 my $rh_host = {};
 my %user_dir;
@@ -84,13 +87,32 @@ sub create_iterator {
 sub get_user_info {
     my $dbh = $Dbc->connect();
     my $sql = q/SELECT * FROM ad_users/;
-    my $rh_user = $dbh->selectall_hashref($sql, 'username');
-    return $rh_user;
+    my $rh_sid = $dbh->selectall_hashref($sql, 'sid');
+    my %user;
+    for my $rh (values %$rh_sid) {
+        my $u = $rh->{username};
+        if ($user{$u}) {
+            warn "Duplicate username '$u':\n"
+                . "\t$rh->{firstname} $rh->{lastname} ($rh->{sid})\n"
+                . "\t$user{$u}{firstname} $user{$u}{lastname}"
+                . " ($user{$u}{sid})\n";
+        }
+        $user{$u} = $rh;
+    }
+    return ($rh_sid, \%user);
+}
+
+sub lookup_sid {
+    my ($sid) = @_;
+    my $u;
+    if ($Rh_Sid->{$sid}) {
+        $u = $Rh_Sid->{$sid}{username};
+    }
+    return $u;
 }
 
 sub report_totals {
     my ($rh_ud, $rh_mnt, $path) = @_;
-    my $rh_user = get_user_info();
     my $ofh = Open($Opt{output}, 'w');
     my $dfh = $Opt{details} ? Open($Opt{details}, 'w') : undef;
     my $total = 0;
@@ -98,7 +120,7 @@ sub report_totals {
     my %user;
     for my $u (keys %$rh_ud) {
         my $rh_u = $rh_ud->{$u};
-        my $rh_info = $rh_user->{$u} || {};
+        my $rh_info = $Rh_User->{$u} || {};
         my @dirs = sort grep { !/^__/ } keys %$rh_u;
         while (@dirs) {
             my $d = shift @dirs;
@@ -162,8 +184,17 @@ sub add_user_dir {
             $user = $uname;
         }
     }
-    elsif ($rh->{AppliesTo} =~ /^SID:$NIH_PREFIX-(\d+)$/) {
-        $user = "NIH:$1";
+    elsif ($rh->{AppliesTo} =~ /^SID:([\w-]+)$/) {
+        my $sid = $1;
+        $user = lookup_sid($sid);
+        if (!$user) {
+            if ($sid =~ /^$NIH_PREFIX-(\d+)$/) {
+                $user = "NIH:$1";
+            }
+            else {
+                $user = $rh->{AppliesTo};
+            }
+        }
     }
     elsif ($rh->{AppliesTo} =~ /^NIH\\(\w+)$/) {
         $user = $1;
