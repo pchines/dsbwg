@@ -68,30 +68,35 @@ CREATE TABLE `archives` (
   `request_by` varchar(30) NOT NULL,
   `request_date` date NOT NULL,
   `user_host` varchar(30) NOT NULL COMMENT 'host or drive user sees',
-  `user_folder` varchar(2048) NOT NULL COMMENT 'path users sees',
+  `user_path` varchar(2048) NOT NULL COMMENT 'path users sees',
   `description` text NOT NULL COMMENT 'description of content',
   `sens_pii` tinyint(4) NOT NULL DEFAULT '0' COMMENT 'see lookups table for possible values',
   `perm_rec` tinyint(4) NOT NULL DEFAULT '0' COMMENT 'see lookups table for possible values',
   `publication` text COMMENT 'related publications',
-  `curr_status` varchar(30) NOT NULL DEFAULT 'new' COMMENT 'new, checked, notified, ready, staged, complete, cancelled, destroyed',
+  `curr_status` varchar(30) NOT NULL DEFAULT 'new' COMMENT 'see lookups table for possible values',
   `inc_prepare` char(11) NOT NULL DEFAULT '' COMMENT 'incident ticket number to track preparation of request',
   `real_host` varchar(30) DEFAULT NULL COMMENT 'host, as seen by storage team',
   `real_path` varchar(2048) DEFAULT NULL COMMENT 'full path to directory, as seen by storage team',
-  `archive_check` date DEFAULT NULL COMMENT 'date program run by Storage Team, and issues resolved',
+  `check_date` date DEFAULT NULL COMMENT 'date archive_check issues resolved',
   `size` float DEFAULT NULL COMMENT 'total size of files, in bytes',
+  `n_files` int(10) unsigned DEFAULT NULL COMMENT 'total number of files',
+  `n_dirs` int(10) unsigned DEFAULT NULL COMMENT 'total number of directories',
   `notify_users` date DEFAULT NULL COMMENT 'date users notified of impending removal',
   `inc_archive` char(11) NOT NULL DEFAULT '' COMMENT 'incident ticket number to track creation of archive',
   `staged_to` varchar(1024) DEFAULT NULL COMMENT 'where directory is moved to (same host/filesystem)',
   `staged_date` date DEFAULT NULL COMMENT 'date data is moved to staging area (start quarantine period)',
   `delete_date` date DEFAULT NULL COMMENT 'date staged data is removed from disk',
   `notes` text COMMENT 'storage team notes regarding this archive',
+  `last_updated` datetime NOT NULL COMMENT 'last time this record was updated',
+  `dir_md5` char(32) NOT NULL DEFAULT '' COMMENT 'MD5 digest of uncompressed dir_info',
   `dir_info` longblob COMMENT 'compressed data: directory permissions from archive_check',
+  `file_md5` char(32) NOT NULL DEFAULT '' COMMENT 'MD5 digest of uncompessed file_info',
   `file_info` longblob COMMENT 'compressed data: file size and permissions from archive_check',
   PRIMARY KEY (`archive_id`),
   KEY `i_request_by` (`request_by`),
   KEY `i_request_date` (`request_date`),
   KEY `i_status` (`curr_status`)
-) ENGINE=MyISAM AUTO_INCREMENT=37 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=42 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -231,4 +236,4 @@ CREATE TABLE `user_totals` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-05-17 12:39:52
+-- Dump completed on 2017-05-23 20:31:20
