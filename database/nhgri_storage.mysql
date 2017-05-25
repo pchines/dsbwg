@@ -67,7 +67,7 @@ CREATE TABLE `archives` (
   `archive_id` int(11) NOT NULL AUTO_INCREMENT,
   `request_by` varchar(30) NOT NULL,
   `request_date` date NOT NULL,
-  `user_host` varchar(30) NOT NULL COMMENT 'host or drive user sees',
+  `user_host` varchar(80) NOT NULL COMMENT 'host or drive user sees',
   `user_path` varchar(2048) NOT NULL COMMENT 'path users sees',
   `description` text NOT NULL COMMENT 'description of content',
   `sens_pii` tinyint(4) NOT NULL DEFAULT '0' COMMENT 'see lookups table for possible values',
@@ -87,14 +87,13 @@ CREATE TABLE `archives` (
   `staged_date` date DEFAULT NULL COMMENT 'date data is moved to staging area (start quarantine period)',
   `delete_date` date DEFAULT NULL COMMENT 'date staged data is removed from disk',
   `notes` text COMMENT 'storage team notes regarding this archive',
-  `last_updated` datetime NOT NULL COMMENT 'last time this record was updated',
+  `last_updated` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'last time this record was updated',
   `dir_md5` char(32) NOT NULL DEFAULT '' COMMENT 'MD5 digest of uncompressed dir_info',
   `dir_info` longblob COMMENT 'compressed data: directory permissions from archive_check',
   `file_md5` char(32) NOT NULL DEFAULT '' COMMENT 'MD5 digest of uncompessed file_info',
   `file_info` longblob COMMENT 'compressed data: file size and permissions from archive_check',
   PRIMARY KEY (`archive_id`),
   KEY `i_request_by` (`request_by`),
-  KEY `i_request_date` (`request_date`),
   KEY `i_status` (`curr_status`)
 ) ENGINE=MyISAM AUTO_INCREMENT=42 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -236,4 +235,4 @@ CREATE TABLE `user_totals` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2017-05-23 20:31:20
+-- Dump completed on 2017-05-24 20:47:35
