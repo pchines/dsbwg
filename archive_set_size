@@ -1,0 +1,159 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use DSBWG::Archive;
+our %Opt;
+our $VERSION = '0.1';
+
+=head1 NAME
+
+archive_set_size - update database with archive size info
+
+=head1 SYNOPSIS
+
+To be run after archive_check, if not yet ready to run archive_check_complete.
+
+Update database for Archive Request #27:
+
+  archive_set_size -ar 27 /path/to/DIR.info.txt
+
+For complete documentation, run C<archive_set_size -man>
+
+=head1 DESCRIPTION
+
+Check and update database:
+
+ - confirm basename of directory is right
+ - set total size of archive
+ - set number of files and directories
+ - add current user to history/notes
+ - set real_host and real_path, based on mount point
+
+=cut
+
+#------------
+# Begin MAIN 
+#------------
+
+process_commandline();
+my $ar = DSBWG::Archive->new();
+my $req = $ar->get_archive_request($Opt{archive_id});
+my $rh_stats = $ar->read_stats($ARGV[0]);
+my $rh_mods = changes_to_record($ar);
+$ar->update_status(%$rh_mods,
+        status_from   => "new",
+        status_to     => "new",
+        check_path    => $rh_stats->{user_path},
+        map { $rh_stats->{$_} ? ($_ => $rh_stats->{$_}) : () }
+            qw(size n_files n_dirs real_host real_path),
+        );
+
+#------------
+# End MAIN
+#------------
+
+sub changes_to_record {
+    my ($ar) = @_;
+    my %change;
+    if ($Opt{username}) {
+        my $today = $ar->today();
+        $change{notes_add} = "$today $Opt{username} ran archive_set_size\n";
+    }
+    if ($Opt{incident}) {
+        $change{inc_prep} = $Opt{incident};
+    }
+    return \%change;
+}
+
+sub process_commandline {
+    # Set defaults here
+    %Opt = (
+            db          => 'storage',
+            username    => $ENV{USER},
+            );
+    GetOptions(\%Opt, qw(archive_id=i db=s dryrun host=s incident=s
+                path=s username|u=s
+                manual help+ version)) || pod2usage(0);
+    if ($Opt{manual})  { pod2usage(verbose => 2); }
+    if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
+    if ($Opt{version}) { die "archive_set_size, version $VERSION\n"; }
+    # If non-option arguments are required, uncomment next line
+    if (@ARGV != 1) {
+        pod2usage("Expect a single archive_check INFO file as input");
+    }
+    if (!$Opt{archive_id}) {
+        pod2usage("Archive ID is required");
+    }
+}
+
+__END__
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--archive_id> N
+
+Required.  Database ID for this archive request.
+
+=item B<--db> realm
+
+Database realm to use to connect to the database.  The default realm name is
+"storage".  Having this realm file configured allows you to connect to the
+database with your own credentials, without having to manually supply a
+password every time.  See C<NHGRI::Db::Connector> for details.
+
+=item B<--dryrun>
+
+Don't update database, just indicate what would be done.
+
+=item B<--host> REALHOST
+
+Hostname to use for real_host column.
+
+=item B<--incident> INCXXXXXXX
+
+Incident ticket number associated with the "preparation" phase of thie
+archive request.  If provided, will update the inc_prep database column with
+this value.
+
+=item B<--path> /real/path
+
+Path to use for real_path column.  It is usually best to let the program
+figure this out, based on filesystem mounts.
+
+=item B<--help|--manual>
+
+Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
+all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 AUTHOR
+
+ Peter Chines - pchines@mail.nih.gov
+
+=head1 LEGAL
+
+This software/database is "United States Government Work" under the terms of
+the United States Copyright Act.  It was written as part of the authors'
+official duties for the United States Government and thus cannot be
+copyrighted.  This software/database is freely available to the public for
+use without a copyright notice.  Restrictions cannot be placed on its present
+or future use. 
+
+Although all reasonable efforts have been taken to ensure the accuracy and
+reliability of the software and data, the National Human Genome Research
+Institute (NHGRI) and the U.S. Government does not and cannot warrant the
+performance or results that may be obtained by using this software or data.
+NHGRI and the U.S.  Government disclaims all warranties as to performance,
+merchantability or fitness for any particular purpose. 
+
+In any work or product derived from this material, proper attribution of the
+authors as the source of the software or data should be made, using "NHGRI
+Information Technology Branch" as the citation. 
+
+=cut
