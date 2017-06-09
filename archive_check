@@ -245,6 +245,7 @@ sub iso_datetime {
 sub record_user_and_group {
     my ($uid, $gid) = @_;
     if (!exists $User{$uid}) {
+        #TODO: if Admin, lookup in local directory of passwd files
         ($User{$uid}) = getpwuid($uid);
         if (!defined $User{$uid}) {
             $User{$uid} = $uid;
@@ -301,6 +302,7 @@ sub report_info {
     my $etime = $Opt{utc} ? gmtime($end) . " UTC" : localtime($end);
     my $elapsed = $end - $start;
     my $host = $ENV{HOSTNAME} || $ENV{HOST} || $ENV{COMPUTERNAME} || $EMPTY;
+    # TODO: if AdminHost, convert using mount info or leave as-is
     print $InfoFh <<"END_SUMMARY";
 Pre-archive report for $host:$AbsDir
 \tReport started :\t$stime
@@ -482,7 +484,7 @@ sub process_commandline {
             recent  => 30,  # days
             suffixes=> [],
             );
-    GetOptions(\%Opt, qw(details! exclude=s fullpaths gzip! ignore=s
+    GetOptions(\%Opt, qw(archive_id=i details! exclude=s fullpaths gzip! ignore=s
                 largest=i newest=i output|outdir|prefix=s recent=i si suffixes=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
@@ -511,6 +513,8 @@ sub process_commandline {
             }
         }
     }
+    # TODO: as Admin, the default dir is a different location (perhaps new
+    # subdir, according to archive_id?)
     $Opt{outdir} ||= "./";
     if (!-e $Opt{outdir}) {
         die "Output directory '$Opt{outdir}' does not exist; please create"

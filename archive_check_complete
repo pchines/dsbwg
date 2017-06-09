@@ -12,8 +12,8 @@ our %Opt;
 our $Dbc;
 our $VERSION = '0.1';
 our $EMPTY = q{};
-our $MAX_FILE_SIZE = 1024 * 1024 * 16;
-our @Required =qw(user_host user_path size real_host real_path);
+our $MAX_FILE_SIZE = 256 * 1024 * 1024; # 256Mb
+our @Required =qw(size n_files n_dirs real_host real_path);
 
 =head1 NAME
 
@@ -51,12 +51,13 @@ process_commandline();
 $Dbc = NHGRI::Db::Connector->new(-realm => $Opt{db});
 my $req = get_archive_request($Opt{archive_id});
 my $rh_stats = read_stats($ARGV[0]);
-update_status($req,
+my $rh_mods = changes_to_record($req);
+update_status($req, %$rh_mods,
         status_from   => "new",
         status_to     => "checked",
-        archive_check => $Opt{date},
-        notes_add     => "$Opt{username} ran archive_check_complete\n",
-        map { $_ => $rh_stats->{$_} } qw(size real_host real_path files_file dirs_file),
+        check_date    => $Opt{date},
+        map { $_ => $rh_stats->{$_} } qw(size n_files n_dirs
+                real_host real_path files_file dirs_file),
         );
 if ($Opt{upload}) {
     upload($req, $rh_stats->{files_file}, "file_info");
@@ -71,7 +72,9 @@ sub get_archive_request {
     my ($id) = @_;
     my $dbh = $Dbc->connect();
     my $ra = $dbh->selectall_arrayref(q/
-            SELECT * FROM archives WHERE archive_id = ? and curr_status <> 'cancelled'
+            SELECT * FROM archives
+             WHERE archive_id = ?
+               AND curr_status <> 'cancelled'
             /, {Slice => {}}, $id);
     if (@$ra != 1) {
         die "Error retrieving archive request #$id: "
@@ -81,6 +84,26 @@ sub get_archive_request {
     return $ra->[0];
 }
 
+sub changes_to_record {
+    my ($ar) = @_;
+    my %change;
+    if ($Opt{username}) {
+        $change{notes_add} = "$Opt{username} ran archive_check_complete\n";
+    }
+    if ($Opt{host}) {
+        $change{user_host} = $Opt{host};
+        $change{notes_add} .= "user_host changed from $ar->{user_host} to $Opt{host}\n";
+    }
+    if ($Opt{path}) {
+        $change{user_path} = $Opt{path};
+        $change{notes_add} .= "user_path changed from $ar->{user_path} to $Opt{path}\n";
+    }
+    if ($Opt{incident}) {
+        $change{inc_prep} = $Opt{incident};
+    }
+    return \%change;
+}
+
 sub update_status {
     my ($ar, %p) = @_;
     my $warn;
@@ -88,8 +111,10 @@ sub update_status {
         warn "Expected before status '$p{status_from}', got '$ar->{curr_status}'\n";
         confirm("Proceed");
     }
-    if (!similar_ending($ar->{user_folder}, $p{real_path})) {
-        die "Archive request #$ar->{archive_id} refers to path '$ar->{user_folder}', while this INFO file is from '$p{real_path}'.\nAborting.\n";
+    if (!similar_ending($ar->{user_path}, $p{real_path})) {
+        die "Archive request #$ar->{archive_id} refers to path"
+            . " '$ar->{user_path}', while this INFO file is from"
+            . " '$p{real_path}'.\nAborting.\n";
     }
 
     my $sql = "UPDATE archives SET curr_status = ?";
@@ -163,12 +188,14 @@ sub read_stats {
         die "Invalid input file name; should be output '<PREFIX>.info.txt'"
             . " file\nfrom archive_check program.\n";
     }
-    if ($Opt{upload} && !(-f "$pre.files.txt.gz" && -f "$pre.dirs.txt.gz")) {
-        die "Missing $pre.files.txt.gz or $pre.dirs.txt.gz\n"
-            . "These files must be in same directory as $ifile\n";
-    }
     $stats{files_file} = "$pre.files.txt.gz";
     $stats{dirs_file}  = "$pre.dirs.txt.gz";
+    if ($Opt{upload} && !(-f $stats{files_file} && -f $stats{dirs_file})) {
+        die "Missing $stats{files_file} or $stats{dirs_file}\n"
+            . "These files must be in same directory as $ifile\n"
+            . "To proceed without uploading these files, use the"
+            . " --noupload option\n";
+    }
     my $ifh = Open($ifile);
     while (<$ifh>) {
         if (/^Pre-archive report for ([\w.-]+):(.+)/) {
@@ -185,14 +212,16 @@ sub read_stats {
         }
         elsif (/Total size of files:\s+([\d.]+[KMGTP]?)$/) {
             $stats{size} = as_number($1);
-            last;
+        }
+        elsif (/Total number of (files|dirs):\s+(\d+)/) {
+            $stats{"n_$1"} = $2;
         }
     }
     my @miss = grep { !exists $stats{$_} } @Required;
     if (@miss) {
         warn "Missing expected information in $ifile: "
             . join(", ", @miss) . "\n";
-        #TODO: ask_continue();
+        confirm("Proceed");
     }
     return \%stats;
 }
