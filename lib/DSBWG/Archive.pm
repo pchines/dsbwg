@@ -93,7 +93,7 @@ sub update_status {
         next if $k =~ /^(status_(to|from)|check_path)$/;
         if ($k eq "notes_add") {
             $msg .= "\tAdd '$p{$k}' to notes\n";
-            $sql .= ", notes = CONCAT(notes,?)";
+            $sql .= ", notes = CONCAT(IFNULL(notes,''),?)";
             push @f, "notes_add";
         }
         elsif ($k =~ /^(\w+)_file$/) {

@@ -60,7 +60,7 @@ sub changes_to_record {
     my %change;
     if ($Opt{username}) {
         my $today = $ar->today();
-        $change{notes_add} = "$today $Opt{username} ran archive_set_size\n";
+        $change{notes_add} = "$today: $Opt{username} ran archive_set_size\n";
     }
     if ($Opt{incident}) {
         $change{inc_prep} = $Opt{incident};
