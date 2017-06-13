@@ -11,6 +11,7 @@ use GTB::Run qw(as_number);
 
 our $EMPTY = q{};
 our @RequiredStats = qw();
+our @Isilons = qw(bo centaur ketu spock wyvern);
 
 =head1 NAME
 
@@ -177,12 +178,20 @@ sub munge_hostname {
     if ($h =~ /^(ghead\d+|gryphon-\w+|gry-compute\d+)\.core\.nhgri\.nih\.gov/) {
         $h = "gryphon";
     }
+    if ($h =~ /^(\w+)-(?:ba|sc)\.nhgri\.nih\.gov$/) {
+        $h = $1;
+    }
     return $h;
 }
 
 sub set_real_path {
     my ($rh_s, $h, $p) = @_;
-    if ($h eq munge_hostname($ENV{HOSTNAME})) {
+    my $isilons = join "|", @Isilons;
+    if ($h =~ /^($isilons)$/i) {
+        $rh_s->{real_host} = $h;
+        $rh_s->{real_path} = $p;
+    }
+    elsif ($h eq munge_hostname($ENV{HOSTNAME})) {
         my ($real_h, $export, $mount) = get_mount($p);
         if (!$mount) {
             warn "Can't find local mount matching $p\n";

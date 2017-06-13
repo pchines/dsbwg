@@ -6,7 +6,7 @@ use Getopt::Long;
 use Pod::Usage;
 use DSBWG::Archive;
 our %Opt;
-our $VERSION = '0.1';
+our $VERSION = '0.2';
 
 =head1 NAME
 
@@ -42,7 +42,7 @@ process_commandline();
 my $ar = DSBWG::Archive->new();
 my $req = $ar->get_archive_request($Opt{archive_id});
 my $rh_stats = $ar->read_stats($ARGV[0]);
-my $rh_mods = changes_to_record($ar);
+my $rh_mods = changes_to_record($ar, $rh_stats);
 $ar->update_status(%$rh_mods,
         status_from   => "new",
         status_to     => "new",
@@ -56,14 +56,27 @@ $ar->update_status(%$rh_mods,
 #------------
 
 sub changes_to_record {
-    my ($ar) = @_;
+    my ($ar, $rh_info) = @_;
+    my $today = $ar->today();
     my %change;
-    if ($Opt{username}) {
-        my $today = $ar->today();
-        $change{notes_add} = "$today: $Opt{username} ran archive_set_size\n";
+    if ($Opt{name}) {
+        $change{notes_add} = "$today: $Opt{name} ran archive_set_size\n";
     }
     if ($Opt{incident}) {
         $change{inc_prep} = $Opt{incident};
+    }
+    for my $type (qw(user real)) {
+        if ($Opt{$type}) {
+            ($change{$type."_host"},$change{$type."_path"})
+                = split /:/, $Opt{$type};
+            my $h = $ar->{_ar}{$type."_host"};
+            my $p = $ar->{_ar}{$type."_path"};
+            $change{notes_add} = "$today: $Opt{name} manually changed $type host/path from $h:$p to $Opt{$type}\n";
+        }
+        elsif ($type eq "real" && $rh_info->{$type."_host"}) {
+            $change{$type."_host"} = $rh_info->{$type."_host"};
+            $change{$type."_path"} = $rh_info->{$type."_path"};
+        }
     }
     return \%change;
 }
@@ -71,11 +84,11 @@ sub changes_to_record {
 sub process_commandline {
     # Set defaults here
     %Opt = (
-            db          => 'storage',
-            username    => $ENV{USER},
+            db      => 'storage',
+            name    => $ENV{USER},
             );
-    GetOptions(\%Opt, qw(archive_id=i db=s dryrun host=s incident=s
-                path=s username|u=s
+    GetOptions(\%Opt, qw(archive_id=i db=s host=s incident=s
+                name=s real=s user=s
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -86,6 +99,11 @@ sub process_commandline {
     }
     if (!$Opt{archive_id}) {
         pod2usage("Archive ID is required");
+    }
+    for my $t (qw(real user)) {
+        if ($Opt{$t} && $Opt{$t} !~ /^[^:\s]+:[^:]+$/) {
+            pod2usage("--$t should be in host:/path format");
+        }
     }
 }
 
@@ -106,14 +124,6 @@ Database realm to use to connect to the database.  The default realm name is
 database with your own credentials, without having to manually supply a
 password every time.  See C<NHGRI::Db::Connector> for details.
 
-=item B<--dryrun>
-
-Don't update database, just indicate what would be done.
-
-=item B<--host> REALHOST
-
-Hostname to use for real_host column.
-
 =item B<--incident> INCXXXXXXX
 
 Incident ticket number associated with the "preparation" phase of thie
@@ -124,6 +134,18 @@ this value.
 
 Path to use for real_path column.  It is usually best to let the program
 figure this out, based on filesystem mounts.
+
+=item B<--real> REALHOST:/real/path
+
+Hostname and path to use for real_host and real_path columns.  These will be
+automatically set, if archive_check was run on the archive host, so should
+not usually need to be provided manually.
+
+=item B<--user> USERHOST:/user/path
+
+Hostname and path to use for user_host and user_path, overwriting what the
+user has provided.  This is appropriate where the user-provided information
+is incorrect.
 
 =item B<--help|--manual>
 
