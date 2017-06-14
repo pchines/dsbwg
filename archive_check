@@ -6,7 +6,7 @@ use Getopt::Long;
 use Pod::Usage;
 use File::Find;
 use File::Spec;
-our $VERSION = "0.3.3";
+our $VERSION = "0.4.0";
 our %Opt;
 our %Stats;     # counts and totals
 our %User;      # map UIDs to usernames
@@ -17,6 +17,11 @@ our @Newest;    # most recently accessed files
 our %Suffix;    # subtotals for each suffix: {suffix}[files,size]
 our $SuffixRe;  # regex for suffixes to capture
 our $RecentCutoff;  # epoch time minimum for "recent" files
+our $Admin;     # boolean: indicates storage admin mode
+# TODO: update these directories with absolute paths; must end with slash
+our $ARCH_DIR = "/tmp/";
+our $PASSWD_DIR = "/home/pchines/src/dsbwg/passwd_files";
+our %LocalLookup;   # cache for Admin mode {host}{users|groups}{ID} => name
 
 our $SymLinkFh; # file for symlink output
 our $DirPermFh; # file for directory permissions
@@ -42,6 +47,11 @@ Test specified directory tree for external symlinks and other issues, prior
 to archiving data to tape:
 
   archive_check [options] DIR
+
+For storage administrators, additional options (and information on disk)
+is required:
+
+  archive_check -ar 27 -host trek DIR
 
 For complete documentation, run C<archive_check -man>
 
@@ -245,14 +255,25 @@ sub iso_datetime {
 sub record_user_and_group {
     my ($uid, $gid) = @_;
     if (!exists $User{$uid}) {
-        #TODO: if Admin, lookup in local directory of passwd files
-        ($User{$uid}) = getpwuid($uid);
+        if ($Admin) {
+            my $rh = read_passwd_file($Opt{host});
+            $User{$uid} = $rh->{$uid};
+        }
+        else {
+            ($User{$uid}) = getpwuid($uid);
+        }
         if (!defined $User{$uid}) {
             $User{$uid} = $uid;
         }
     }
     if (!exists $Group{$gid}) {
-        ($Group{$gid}) = getgrgid($gid);
+        if ($Admin) {
+            my $rh = read_group_file($Opt{host});
+            $Group{$gid} = $rh->{$gid};
+        }
+        else {
+            ($Group{$gid}) = getgrgid($gid);
+        }
         if (!defined $Group{$gid}) {
             $Group{$gid} = $gid;
         }
@@ -302,9 +323,13 @@ sub report_info {
     my $etime = $Opt{utc} ? gmtime($end) . " UTC" : localtime($end);
     my $elapsed = $end - $start;
     my $host = $ENV{HOSTNAME} || $ENV{HOST} || $ENV{COMPUTERNAME} || $EMPTY;
-    # TODO: if AdminHost, convert using mount info or leave as-is
+    my $dblink = $EMPTY;
+    if ($Admin) {
+        ($host, $AbsDir) = use_mount_info($host, $AbsDir);
+        $dblink = "\n\tArchive request ID:\t$Opt{archive_id}";
+    }
     print $InfoFh <<"END_SUMMARY";
-Pre-archive report for $host:$AbsDir
+Pre-archive report for $host:$AbsDir$dblink
 \tReport started :\t$stime
 \tReport finished:\t$etime
 \tElapsed (seconds):\t$elapsed
@@ -368,6 +393,36 @@ END_SUMMARY
             printf $InfoFh "\t%8s  %s\n", human_readable($ra->[0]), $ra->[1];
         }
     }
+}
+
+sub get_mount {
+    my ($p) = @_;
+    my ($mh, $ex, $mp);
+    my @o = `df -h $p`;
+    if ($o[1] =~ /^([\w\.]+):(\S+)/) {
+        $mh = $1;
+        $ex = $2;
+        if ($o[2] =~ /(\S+)$/) {
+            $mp = $1;
+        }
+    }
+    return ($mh, $ex, $mp);
+}
+
+sub use_mount_info {
+    my ($h, $p) = @_;
+    my ($real_h, $export, $mount) = get_mount($p);
+    if (!$mount) {
+        warn "Can't find local mount point matching $p\n";
+    }
+    elsif ($p !~ s/^$mount/$export/) {
+        warn "Error translating path based on $mount = $export\n";
+    }
+    else {
+        $h = $real_h;
+        $h =~ s/-(sc|ba)\.nhgri\.nih\.gov$//i;
+    }
+    return ($h, $p);
 }
 
 sub add_warning {
@@ -474,6 +529,46 @@ END_MSG
     return $fh;
 }
 
+sub read_passwd_file {
+    my ($host) = @_;
+    if (!$LocalLookup{$host}{users}) {
+        my $f = sprintf("$PASSWD_DIR/passwd_%s", $host);
+        if (! -f $f) {
+            warn "Warning: did not find passwd file for $host\n";
+            return {};
+        }
+        my %user;
+        my $fh = Open($f);
+        while (<$fh>) {
+            chomp;
+            my @f = split /:/;
+            $user{$f[2]} = $f[0];
+        }
+        $LocalLookup{$host}{users} = \%user;
+    }
+    return $LocalLookup{$host}{users};
+}
+
+sub read_group_file {
+    my ($host) = @_;
+    if (!$LocalLookup{$host}{groups}) {
+        my $f = sprintf("$PASSWD_DIR/group_%s", $host);
+        if (! -f $f) {
+            warn "Warning: did not find group file for $host\n";
+            return {};
+        }
+        my %group;
+        my $fh = Open($f);
+        while (<$fh>) {
+            chomp;
+            my @f = split /:/;
+            $group{$f[2]} = $f[0];
+        }
+        $LocalLookup{$host}{groups} = \%group;
+    }
+    return $LocalLookup{$host}{groups};
+}
+
 sub process_commandline {
     # Set defaults here
     %Opt = (details => 1,
@@ -484,8 +579,9 @@ sub process_commandline {
             recent  => 30,  # days
             suffixes=> [],
             );
-    GetOptions(\%Opt, qw(archive_id=i details! exclude=s fullpaths gzip! ignore=s
-                largest=i newest=i output|outdir|prefix=s recent=i si suffixes=s utc
+    GetOptions(\%Opt, qw(archive_id=i details! exclude=s fullpaths gzip!
+                host=s ignore=s largest=i newest=i output|outdir|prefix=s
+                recent=i si suffixes=s utc
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
@@ -513,9 +609,20 @@ sub process_commandline {
             }
         }
     }
-    # TODO: as Admin, the default dir is a different location (perhaps new
-    # subdir, according to archive_id?)
-    $Opt{outdir} ||= "./";
+    if ($Opt{archive_id} && $Opt{host}) {
+        $Admin = 1;
+    }
+    elsif ($Opt{archive_id} || $Opt{host}) {
+        pod2usage("Administrative mode requires both -archive_id and -host");
+    }
+    if ($Admin) {
+        # TODO? make new subdir, according to archive_id?
+        $Opt{outdir} = $ARCH_DIR;
+        $Opt{prefix} = $Opt{outdir}."AR$Opt{archive_id}";
+    }
+    else {
+        $Opt{outdir} ||= "./";
+    }
     if (!-e $Opt{outdir}) {
         die "Output directory '$Opt{outdir}' does not exist; please create"
             . " it first.\n";
