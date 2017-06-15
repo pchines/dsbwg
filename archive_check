@@ -745,6 +745,19 @@ timezone.
 Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
 all options, C<--manual> provides complete documentation.
 
+=head2 OPTIONS FOR ADMIN MODE ONLY:
+
+=item B<--archive_id> #
+
+Required: archive request that is referenced.  Written to info file, and forms
+the basis for output file names.
+
+=item B<--host> HOSTNAME
+
+Required: Linux host on which the user has mounted the directory.  This
+hostname (simple, not fully qualified) will be use to lookup usernames in the
+passwd files.
+
 =back
 
 =head1 FILES
