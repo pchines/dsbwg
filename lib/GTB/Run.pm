@@ -5,7 +5,6 @@ use strict;
 use GTB::File qw(Open);
 use File::Temp qw(tempfile);
 use Carp qw(carp croak confess);
-use GTB::Unix qw(which);
 
 use Exporter;
 our @ISA = qw(Exporter);
@@ -22,7 +21,8 @@ my $EMPTY = q{};
 
 sub find_exe {
     my ($prog) = @_;
-    my $out = which("$prog");
+    my $out = `which $prog`;
+    chomp $out;
     return $out;
 }
 
