@@ -19,8 +19,8 @@ our $SuffixRe;  # regex for suffixes to capture
 our $RecentCutoff;  # epoch time minimum for "recent" files
 our $Admin;     # boolean: indicates storage admin mode
 # TODO: update these directories with absolute paths; must end with slash
-our $ARCH_DIR = "/tmp/";
-our $PASSWD_DIR = "/home/pchines/src/dsbwg/passwd_files";
+our $ARCH_DIR = "/mnt/archive_mount/data_tier_%s/archive/";
+our $PASSWD_DIR = "/mnt/archive_mount/passwd/%s_passwd/";
 our %LocalLookup;   # cache for Admin mode {host}{users|groups}{ID} => name
 
 our $SymLinkFh; # file for symlink output
@@ -121,6 +121,9 @@ if ($TerminalAttached) {
 warn "Grand total: ", human_readable($Stats{"grand_total"}), "\n";
 for my $w (sort keys %{ $Stats{"warnings"} }) {
     warn "$w\n";
+}
+if ($Admin) {
+    warn "Data written to prefix $Opt{prefix}\n";
 }
 
 #------------
@@ -399,10 +402,10 @@ sub get_mount {
     my ($p) = @_;
     my ($mh, $ex, $mp);
     my @o = `df -h $p`;
-    if ($o[1] =~ /^([\w\.]+):(\S+)/) {
+    if ($o[1] =~ /^([\w\.-]+):(\S+)/) {
         $mh = $1;
         $ex = $2;
-        if ($o[2] =~ /(\S+)$/) {
+        if ($o[1] =~ /(\S+)$/) {
             $mp = $1;
         }
     }
@@ -532,7 +535,7 @@ END_MSG
 sub read_passwd_file {
     my ($host) = @_;
     if (!$LocalLookup{$host}{users}) {
-        my $f = sprintf("$PASSWD_DIR/passwd_%s", $host);
+        my $f = sprintf("$PASSWD_DIR/passwd", $host);
         if (! -f $f) {
             warn "Warning: did not find passwd file for $host\n";
             return {};
@@ -552,7 +555,7 @@ sub read_passwd_file {
 sub read_group_file {
     my ($host) = @_;
     if (!$LocalLookup{$host}{groups}) {
-        my $f = sprintf("$PASSWD_DIR/group_%s", $host);
+        my $f = sprintf("$PASSWD_DIR/group", $host);
         if (! -f $f) {
             warn "Warning: did not find group file for $host\n";
             return {};
@@ -616,8 +619,12 @@ sub process_commandline {
         pod2usage("Administrative mode requires both -archive_id and -host");
     }
     if ($Admin) {
-        # TODO? make new subdir, according to archive_id?
-        $Opt{outdir} = $ARCH_DIR;
+        if (@ARGV != 1) {
+            pod2usage("Administrative mode allows only one directory");
+        }
+        my ($i) = use_mount_info($ENV{HOSTNAME}, $ARGV[0]);
+        $Opt{outdir} = sprintf("$ARCH_DIR/AR$Opt{archive_id}/", $i);
+        mkdir $Opt{outdir};
         $Opt{prefix} = $Opt{outdir}."AR$Opt{archive_id}";
     }
     else {
