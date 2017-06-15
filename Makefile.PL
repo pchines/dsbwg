@@ -5,7 +5,7 @@ WriteMakefile(
               ABSTRACT     => 'Programs for storage inventory and archives for NHGRI Data Storage and Backup Working Group',
               AUTHOR       => 'Peter Chines (pchines@mail.nih.gov)',
               EXE_FILES    => [qw(
-                  archive_check archive_check_complete archive_notify
+                  archive_check archive_check_complete archive_set_size
                   isilon_summarize_report
                   )],
               PREREQ_PM    => {
