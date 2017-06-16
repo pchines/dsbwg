@@ -5,15 +5,12 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 use File::Spec;
-use NHGRI::Db::Connector;
+use DSBWG::Archive;
 use GTB::File qw(Open);
 use GTB::Run qw(as_number);
 our %Opt;
-our $Dbc;
-our $VERSION = '0.1';
+our $VERSION = '0.2';
 our $EMPTY = q{};
-our $MAX_FILE_SIZE = 256 * 1024 * 1024; # 256Mb
-our @Required =qw(size n_files n_dirs real_host real_path);
 
 =head1 NAME
 
@@ -48,11 +45,11 @@ Check and update database:
 #------------
 
 process_commandline();
-$Dbc = NHGRI::Db::Connector->new(-realm => $Opt{db});
-my $req = get_archive_request($Opt{archive_id});
-my $rh_stats = read_stats($ARGV[0]);
-my $rh_mods = changes_to_record($req);
-update_status($req, %$rh_mods,
+my $ar = DSBWG::Archive->new(db => $Opt{db}, user => $Opt{name});
+my $req = $ar->get_archive_request($Opt{archive_id});
+my $rh_stats = $ar->read_stats($ARGV[0]);
+my $rh_mods = changes_to_record($req, $rh_stats);
+$ar->update_status($req, %$rh_mods,
         status_from   => "new",
         status_to     => "checked",
         check_date    => $Opt{date},
@@ -60,35 +57,19 @@ update_status($req, %$rh_mods,
                 real_host real_path files_file dirs_file),
         );
 if ($Opt{upload}) {
-    upload($req, $rh_stats->{files_file}, "file_info");
-    upload($req, $rh_stats->{dirs_file}, "dir_info");
+    $ar->upload_file($rh_stats->{files_file}, "file_info");
+    $ar->upload_file($rh_stats->{dirs_file}, "dir_info");
 }
 
 #------------
 # End MAIN
 #------------
 
-sub get_archive_request {
-    my ($id) = @_;
-    my $dbh = $Dbc->connect();
-    my $ra = $dbh->selectall_arrayref(q/
-            SELECT * FROM archives
-             WHERE archive_id = ?
-               AND curr_status <> 'cancelled'
-            /, {Slice => {}}, $id);
-    if (@$ra != 1) {
-        die "Error retrieving archive request #$id: "
-            . ($dbh->errstr ? $dbh->errstr : "record not found")
-            . "\n";
-    }
-    return $ra->[0];
-}
-
 sub changes_to_record {
-    my ($ar) = @_;
+    my ($ar, $rh_info) = @_;
     my %change;
-    if ($Opt{username}) {
-        $change{notes_add} = "$Opt{username} ran archive_check_complete\n";
+    if ($Opt{name}) {
+        $change{notes_add} = "$Opt{name} ran archive_check_complete\n";
     }
     if ($Opt{host}) {
         $change{user_host} = $Opt{host};
@@ -99,203 +80,20 @@ sub changes_to_record {
         $change{notes_add} .= "user_path changed from $ar->{user_path} to $Opt{path}\n";
     }
     if ($Opt{incident}) {
-        $change{inc_prep} = $Opt{incident};
+        $change{inc_prepare} = $Opt{incident};
     }
     return \%change;
 }
 
-sub update_status {
-    my ($ar, %p) = @_;
-    my $warn;
-    if ($ar->{curr_status} ne $p{status_from}) {
-        warn "Expected before status '$p{status_from}', got '$ar->{curr_status}'\n";
-        confirm("Proceed");
-    }
-    if (!similar_ending($ar->{user_path}, $p{real_path})) {
-        die "Archive request #$ar->{archive_id} refers to path"
-            . " '$ar->{user_path}', while this INFO file is from"
-            . " '$p{real_path}'.\nAborting.\n";
-    }
-
-    my $sql = "UPDATE archives SET curr_status = ?";
-    my @f = ("status_to");
-    my $msg = "Preparing update for Archive Request #$ar->{archive_id}:\n";
-    $msg .= "\tChange status from '$p{status_from}' to '$p{status_to}'\n";
-    for my $k (sort keys %p) {
-        next if $k =~ /^status_(to|from)/;
-        if ($k eq "notes_add") {
-            $msg .= "\tAdd '$p{$k}' to notes\n";
-            $sql .= ", notes = CONCAT(notes,?)";
-            push @f, "notes_add";
-        }
-        elsif ($k =~ /^(\w+)_file$/) {
-            if ($Opt{upload}) {
-                $msg .= "\tSet ${1}_info to contents of $p{$k}\n";
-            }
-        }
-        else {
-            $msg .= "\tSet $k to '$p{$k}'\n";
-            $sql .= ", $k = ?";
-            push @f, $k;
-        }
-    }
-    $msg .= "Proceed";
-    $sql .= " WHERE archive_id = ? AND curr_status = ?";
-    confirm($msg, "Y");
-    my $dbh = $Dbc->connect();
-    my $sth = $dbh->prepare($sql);
-    my $rv = $sth->execute(
-            (map { $p{$_} } @f), $ar->{archive_id}, $ar->{curr_status} );
-    return $rv+0;
-}
-
-sub upload {
-    my ($ar, $file, $col) = @_;
-    my $id = $ar->{archive_id} || die "Missing archive ID";
-    my $dbh = $Dbc->connect();
-    my $rs_content = slurp_file($file);
-    #TODO MD5
-    my $sth = $dbh->prepare(
-            qq/UPDATE archives SET $col = ? WHERE archive_id = ?/);
-    my $rv = $sth->execute($$rs_content, $ar->{archive_id});
-    return $rv+0;
-}
-
-sub slurp_file {
-    my ($file) = @_;
-    my $size = -s $file;
-    if ($size > $MAX_FILE_SIZE) {
-        warn "WARNING: $file is larger than maximum allowed size\n";
-    }
-    my $fh = Open($file);
-    local $/;
-    my $data = <$fh>;
-    return \$data;
-}
-
-sub similar_ending {
-    my ($p1, $p2) = @_;
-    my @a = File::Spec->splitdir($p1);
-    my @b = File::Spec->splitdir($p2);
-    return $a[-1] eq $b[-1];
-}
-
-sub read_stats {
-    my ($ifile) = @_;
-    my %stats;
-    my $pre = $ifile;
-    if ($pre !~ s/\.info\.txt(?:\.gz)?$//) {
-        die "Invalid input file name; should be output '<PREFIX>.info.txt'"
-            . " file\nfrom archive_check program.\n";
-    }
-    $stats{files_file} = "$pre.files.txt.gz";
-    $stats{dirs_file}  = "$pre.dirs.txt.gz";
-    if ($Opt{upload} && !(-f $stats{files_file} && -f $stats{dirs_file})) {
-        die "Missing $stats{files_file} or $stats{dirs_file}\n"
-            . "These files must be in same directory as $ifile\n"
-            . "To proceed without uploading these files, use the"
-            . " --noupload option\n";
-    }
-    my $ifh = Open($ifile);
-    while (<$ifh>) {
-        if (/^Pre-archive report for ([\w.-]+):(.+)/) {
-            my ($h, $p) = ($1, $2);
-            if ($h =~ /k\w+\.gc\.nih\.gov/) {
-                $h = "trek";
-            }
-            if ($h =~ /^(ghead\d+|gryphon-\w+|gry-compute\d+)\.core\.nhgri\.nih\.gov/) {
-                $h = "gryphon";
-            }
-            $stats{user_host} = $h;
-            $stats{user_path} = $p;
-            set_real_path(\%stats, $h, $p);
-        }
-        elsif (/Total size of files:\s+([\d.]+[KMGTP]?)$/) {
-            $stats{size} = as_number($1);
-        }
-        elsif (/Total number of (files|dirs):\s+(\d+)/) {
-            $stats{"n_$1"} = $2;
-        }
-    }
-    my @miss = grep { !exists $stats{$_} } @Required;
-    if (@miss) {
-        warn "Missing expected information in $ifile: "
-            . join(", ", @miss) . "\n";
-        confirm("Proceed");
-    }
-    return \%stats;
-}
-
-sub set_real_path {
-    my ($rh_s, $h, $p) = @_;
-    if ($Opt{translate} && $Opt{translate} =~ /^([^=]+)=([^=]+)/) {
-        my ($src, $dst) = ($1, $2);
-        if ($p !~ s/^$src/$dst/) {
-            warn "Translation $Opt{translate} of $p failed\n";
-        }
-    }
-    my ($real_h, $export, $mount) = get_mount($p);
-    if (!$mount) {
-        warn "Can't find local mount matching $p\n";
-    }
-    elsif ($p !~ s/^$mount/$export/) {
-        warn "Error translating path based on $mount = $export\n";
-    }
-    $rh_s->{real_host} = $Opt{host} || $real_h || $h;
-    $rh_s->{real_path} = $Opt{path} || $p;
-}
-
-sub get_mount {
-    my ($p) = @_;
-    my ($mh, $ex, $mp);
-    my @o = `df -h $p`;
-    if ($o[1] =~ /^([\w\.]+):(\S+)/) {
-        $mh = $1;
-        $ex = $2;
-        if ($o[2] =~ /(\S+)$/) {
-            $mp = $1;
-        }
-    }
-    return ($mh, $ex, $mp);
-}
-
-sub today {
-    my @t = localtime();
-    return sprintf("%d-%02d-%02d", $t[5]+1900, $t[4]+1, $t[3]);
-}
-
-sub ask {
-    my ($msg, $default) = @_;
-    print STDERR "$msg ";
-    my $resp = <STDIN>;
-    chomp $resp;
-    if ($resp eq $EMPTY) {
-        $resp = $default;
-    }
-    return $resp;
-}
-
-sub confirm {
-    my ($msg, $default) = @_;
-    $default ||= "N";
-    my $choices = $default eq "N" ? "y/N" : "Y/n";
-    my $resp = ask("$msg? [$choices]", $default);
-    my $ok = $resp =~ /^Y/i;
-    if (!$ok) {
-        die "Aborting at user request.\n";
-    }
-    return $ok;
-}
-
 sub process_commandline {
     # Set defaults here
-    %Opt = (date        => today(),
+    %Opt = (date	=> DSGWB::Archive->today(),
             db          => 'storage',
             upload      => 1,
-            username    => $ENV{USER},
+            name        => $ENV{USER},
             );
     GetOptions(\%Opt, qw(archive_id=i date=s db=s dryrun host=s incident=s
-                path=s translate=s upload! username|u=s
+                name|u=s path=s translate=s upload!
                 manual help+ version)) || pod2usage(0);
     if ($Opt{manual})  { pod2usage(verbose => 2); }
     if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }

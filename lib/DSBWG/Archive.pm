@@ -10,8 +10,9 @@ use GTB::File qw(Open);
 use GTB::Run qw(as_number);
 
 our $EMPTY = q{};
-our @RequiredStats = qw();
+our @RequiredStats = qw(size n_files n_dirs);
 our @Isilons = qw(bo centaur ketu spock wyvern);
+our $MAX_FILE_SIZE = 256 * 1024 * 1024; # 256Mb
 
 =head1 NAME
 
@@ -77,7 +78,6 @@ sub get_archive_request {
 sub update_status {
     my ($self, %p) = @_;
     my $ar = $self->{_ar} || croak "Must get_archive_request() before calling update_status()";
-    my $warn;
     if ($ar->{curr_status} ne $p{status_from}) {
         warn "Expected before status '$p{status_from}', got '$ar->{curr_status}'\n";
         $self->confirm("Continue");
@@ -87,6 +87,9 @@ sub update_status {
         die "Archive request #$ar->{archive_id} refers to path"
             . " '$ar->{user_path}',\nwhile this INFO file is from"
             . " '$cp'.\nAborting.\n";
+    }
+    if ($p{archive_id} && $p{archive_id} != $ar->{archive_id}) {
+        die "This INFO file is from archive #$p{archive_id}, not #$ar->{archive_id}\n";
     }
 
     my $sql = "UPDATE archives SET curr_status = ?";
@@ -127,6 +130,32 @@ sub update_status {
     }
     return $rv+0;
 }
+
+sub upload_file {
+    my ($self, $file, $col) = @_;
+    my $ar = $self->{_ar} || croak "Must get_archive_request() before calling update_status()";
+    my $id = $ar->{archive_id} || die "Missing archive ID";
+    my $dbh = $self->dbh();
+    my $rs_content = $self->slurp_file($file);
+    #TODO MD5
+    my $sth = $dbh->prepare(
+            qq/UPDATE archives SET $col = ? WHERE archive_id = ?/);
+    my $rv = $sth->execute($$rs_content, $ar->{archive_id});
+    return $rv+0;
+}
+
+sub slurp_file {
+    my ($self, $file) = @_;
+    my $size = -s $file;
+    if ($size > $MAX_FILE_SIZE) {
+        warn "WARNING: $file is larger than maximum allowed size\n";
+    }
+    my $fh = Open($file);
+    local $/;
+    my $data = <$fh>;
+    return \$data;
+}
+
 
 sub similar_ending {
     my ($self, $p1, $p2) = @_;
