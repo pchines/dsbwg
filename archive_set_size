@@ -39,7 +39,7 @@ Check and update database:
 #------------
 
 process_commandline();
-my $ar = DSBWG::Archive->new();
+my $ar = DSBWG::Archive->new(db => $Opt{db}, user => $Opt{name});
 my $req = $ar->get_archive_request($Opt{archive_id});
 my $rh_stats = $ar->read_stats($ARGV[0]);
 my $rh_mods = changes_to_record($ar, $rh_stats);

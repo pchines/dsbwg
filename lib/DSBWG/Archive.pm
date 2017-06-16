@@ -52,10 +52,15 @@ sub new {
     return $self;
 }
 
+sub dbh {
+    my ($self) = @_;
+    return $self->{dbc}->connect();
+}
+
 sub get_archive_request {
     my ($self, $id) = @_;
     if (!$self->{_ar} || $self->{_ar}{archive_id} != $id) {
-        my $dbh = $self->{dbc}->connect();
+        my $dbh = $self->dbh();
         my $ra = $dbh->selectall_arrayref(q/
                 SELECT * FROM archives WHERE archive_id = ?
                 /, {Slice => {}}, $id);
@@ -115,7 +120,7 @@ sub update_status {
     $sql .= " WHERE archive_id = ? AND curr_status = ?";
     my $rv = 0;
     if ($self->confirm($msg, "Y")) {
-        my $dbh = $self->{dbc}->connect();
+        my $dbh = $self->dbh();
         my $sth = $dbh->prepare($sql);
         $rv = $sth->execute(
             (map { $p{$_} } @f), $ar->{archive_id}, $ar->{curr_status} );

@@ -1,0 +1,191 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Pod::Usage;
+use GTB::File qw(Open);
+use DSBWG::Archive;
+our %Opt;
+our $VERSION = '0.1';
+
+=head1 NAME
+
+archive_get_sizes - report number and size of files at each stage
+
+=head1 SYNOPSIS
+
+Uses information added to database via archive_set_size or
+archive_check_complete.
+
+Report totals for each stage of completion:
+
+  archive_get_sizes 
+
+Can also details for a single archive request, or for all of them:
+
+  archive_get_sizes -details > archives.csv
+
+For complete documentation, run C<archive_get_sizes -man>
+
+=head1 DESCRIPTION
+
+Reports number and size of files, summarized in various ways.
+
+=cut
+
+#------------
+# Begin MAIN 
+#------------
+
+process_commandline();
+my $ar = DSBWG::Archive->new(db => $Opt{db}, user => $Opt{name});
+my $sql = generate_query($Opt{by});
+my $ra = get_results($sql, $ar);
+print_results($ra);
+
+#------------
+# End MAIN
+#------------
+
+sub generate_query {
+    my ($by) = @_;
+    my $sql;
+    if ($Opt{details}) {
+        my $spec = $Opt{archive_id} ? "AND archive_id = $Opt{archive_id}" : '';
+        $sql = qq/
+    SELECT archive_id, curr_status, user_host, user_path,
+           size, n_files, n_dirs,
+           real_host, real_path, inc_prepare, inc_archive,
+           request_date, check_date, last_updated
+      FROM archives
+      WHERE curr_status <> "cancelled" $spec
+        /;
+    }
+    else {
+        $sql = qq/
+    SELECT $by, count(*) as n_requests, sum(size) as total_size,
+           sum(n_files) as n_files, sum(n_dirs) as n_dirs
+      FROM archives
+      WHERE curr_status <> "cancelled"
+        AND size > 0
+      GROUP BY $by
+        /;
+    }
+    return $sql;
+}
+
+sub get_results {
+    my ($sql, $ar) = @_;
+    my $dbh = $ar->dbh();
+    my $sth = $dbh->prepare($sql);
+    $sth->execute();
+    my $ra_names = $sth->{NAME_lc};
+    my $ra_data = $sth->fetchall_arrayref();
+    unshift @$ra_data, $ra_names;
+    if ($sql =~ s/size > 0/(size = 0 OR size is NULL)/) {
+        $sth = $dbh->prepare($sql);
+        $sth->execute();
+        my $ra_z = $sth->fetchall_arrayref();
+        my ($i) = grep { $ra_names->[$_] eq "curr_status" } (0..@$ra_names-1);
+        for my $ra (@$ra_z) {
+            $ra->[$i] .= "_NOSIZE";
+            push @$ra_data, $ra;
+        }
+    }
+    return $ra_data;
+}
+
+sub print_results {
+    my ($ra_all) = @_;
+    my $ofh = Open($Opt{output}, 'w');
+    for my $ra (@$ra_all) {
+        print $ofh join($Opt{separator},
+                map { defined($_) ? $_ : $Opt{null} } @$ra), "\n";
+    }
+    close($ofh) or die "Error closing output $Opt{output}, $!\n";
+}
+
+sub process_commandline {
+    # Set defaults here
+    %Opt = (by          => 'curr_status',
+            db          => 'storage',
+            null        => 'NA',
+            output      => '-',
+            separator   => ',',
+            );
+    GetOptions(\%Opt, qw(archive_id=i by=s db=s details|d output=s separator=s
+                manual help+ version)) || pod2usage(0);
+    if ($Opt{manual})  { pod2usage(verbose => 2); }
+    if ($Opt{help})    { pod2usage(verbose => $Opt{help}-1); }
+    if ($Opt{version}) { die "archive_get_sizes, version $VERSION\n"; }
+    # If non-option arguments are required, uncomment next line
+    if (@ARGV) {
+        pod2usage("Don't expect any unnamed arguments");
+    }
+    if ($Opt{archive_id}) {
+        $Opt{details} = 1;
+    }
+}
+
+__END__
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--archive_id> N
+
+Report on this specific archive request.
+
+=item B<--by> status|user|real_host
+
+Subtotal results by specified grouping variable(s).  If multiple, separate with comma.  Default is to group by "status".
+
+=item B<--db> realm
+
+Database realm to use to connect to the database.  The default realm name is
+"storage".  Having this realm file configured allows you to connect to the
+database with your own credentials, without having to manually supply a
+password every time.  See C<NHGRI::Db::Connector> for details.
+
+=item B<--details>
+
+Report each archive request on a separate line, with all relevant details.
+
+=item B<--output> FILE
+
+Destination file; otherwise writes output to STDOUT.
+
+=item B<--help|--manual>
+
+Display documentation.  One C<--help> gives a brief synopsis, C<-h -h> shows
+all options, C<--manual> provides complete documentation.
+
+=back
+
+=head1 AUTHOR
+
+ Peter Chines - pchines@mail.nih.gov
+
+=head1 LEGAL
+
+This software/database is "United States Government Work" under the terms of
+the United States Copyright Act.  It was written as part of the authors'
+official duties for the United States Government and thus cannot be
+copyrighted.  This software/database is freely available to the public for
+use without a copyright notice.  Restrictions cannot be placed on its present
+or future use. 
+
+Although all reasonable efforts have been taken to ensure the accuracy and
+reliability of the software and data, the National Human Genome Research
+Institute (NHGRI) and the U.S. Government does not and cannot warrant the
+performance or results that may be obtained by using this software or data.
+NHGRI and the U.S.  Government disclaims all warranties as to performance,
+merchantability or fitness for any particular purpose. 
+
+In any work or product derived from this material, proper attribution of the
+authors as the source of the software or data should be made, using "NHGRI
+Information Technology Branch" as the citation. 
+
+=cut

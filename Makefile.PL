@@ -6,6 +6,7 @@ WriteMakefile(
               AUTHOR       => 'Peter Chines (pchines@mail.nih.gov)',
               EXE_FILES    => [qw(
                   archive_check archive_check_complete archive_set_size
+                  archive_get_sizes
                   isilon_summarize_report
                   )],
               PREREQ_PM    => {
