@@ -99,9 +99,24 @@ sub get_results {
 sub print_results {
     my ($ra_all) = @_;
     my $ofh = Open($Opt{output}, 'w');
-    for my $ra (@$ra_all) {
-        print $ofh join($Opt{separator},
-                map { defined($_) ? $_ : $Opt{null} } @$ra), "\n";
+    if ($Opt{archive_id} && @$ra_all == 2) {
+        my $c = @{$ra_all->[0]};
+        my $max = 0;
+        for (my $i = 0; $i < $c; ++$i) {
+            my $n = length $ra_all->[0][$i];
+            if ($max < $n) {
+                $max = $n;
+            }
+        }
+        for (my $i = 0; $i < $c; ++$i) {
+            printf $ofh "%${max}s:%s\n", $ra_all->[0][$i], $ra_all->[1][$i];
+        }
+    }
+    else {
+        for my $ra (@$ra_all) {
+            print $ofh join($Opt{separator},
+                    map { defined($_) ? $_ : $Opt{null} } @$ra), "\n";
+        }
     }
     close($ofh) or die "Error closing output $Opt{output}, $!\n";
 }
