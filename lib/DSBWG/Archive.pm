@@ -5,6 +5,7 @@ use strict;
 use warnings;
 use Carp;
 use File::Spec;
+use Digest::MD5 qw(md5_hex);
 use NHGRI::Db::Connector;
 use GTB::File qw(Open);
 use GTB::Run qw(as_number);
@@ -77,7 +78,8 @@ sub get_archive_request {
 
 sub update_status {
     my ($self, %p) = @_;
-    my $ar = $self->{_ar} || croak "Must get_archive_request() before calling update_status()";
+    my $ar = $self->{_ar}
+        || croak "Must get_archive_request() before calling update_status()";
     if ($ar->{curr_status} ne $p{status_from}) {
         warn "Expected before status '$p{status_from}', got '$ar->{curr_status}'\n";
         $self->confirm("Continue");
@@ -133,14 +135,24 @@ sub update_status {
 
 sub upload_file {
     my ($self, $file, $col) = @_;
-    my $ar = $self->{_ar} || croak "Must get_archive_request() before calling update_status()";
+    my $ar = $self->{_ar}
+        || croak "Must get_archive_request() before calling upload_file()";
     my $id = $ar->{archive_id} || die "Missing archive ID";
     my $dbh = $self->dbh();
     my $rs_content = $self->slurp_file($file);
-    #TODO MD5
-    my $sth = $dbh->prepare(
-            qq/UPDATE archives SET $col = ? WHERE archive_id = ?/);
-    my $rv = $sth->execute($$rs_content, $ar->{archive_id});
+    my $sql;
+    my @md5;
+    my $md5_col = $col;
+    if ($md5_col =~ s/_info/_md5/) {
+        @md5 = md5_hex($$rs_content);
+        $sql = qq/UPDATE archives SET $col = ?, $md5_col = ?
+                   WHERE archive_id = ?
+                 /;
+    } else {
+        $sql = qq/UPDATE archives SET $col = ? WHERE archive_id = ?/;
+    }
+    my $sth = $dbh->prepare($sql);
+    my $rv = $sth->execute($$rs_content, @md5, $id);
     return $rv+0;
 }
 
@@ -150,7 +162,8 @@ sub slurp_file {
     if ($size > $MAX_FILE_SIZE) {
         warn "WARNING: $file is larger than maximum allowed size\n";
     }
-    my $fh = Open($file);
+    my $fh;
+    open $fh, "<", $file or die "Error opening $file, $!\n";
     local $/;
     my $data = <$fh>;
     return \$data;
