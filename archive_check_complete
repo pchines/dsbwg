@@ -49,7 +49,7 @@ my $ar = DSBWG::Archive->new(db => $Opt{db}, user => $Opt{name});
 my $req = $ar->get_archive_request($Opt{archive_id});
 my $rh_stats = $ar->read_stats($ARGV[0]);
 my $rh_mods = changes_to_record($req, $rh_stats);
-$ar->update_status($req, %$rh_mods,
+$ar->update_status(%$rh_mods,
         status_from   => "new",
         status_to     => "checked",
         check_date    => $Opt{date},
@@ -69,7 +69,7 @@ sub changes_to_record {
     my ($ar, $rh_info) = @_;
     my %change;
     if ($Opt{name}) {
-        $change{notes_add} = "$Opt{name} ran archive_check_complete\n";
+        $change{notes_add} = "$Opt{date}: $Opt{name} ran archive_check_complete\n";
     }
     if ($Opt{host}) {
         $change{user_host} = $Opt{host};
@@ -87,7 +87,7 @@ sub changes_to_record {
 
 sub process_commandline {
     # Set defaults here
-    %Opt = (date	=> DSGWB::Archive->today(),
+    %Opt = (date	=> DSBWG::Archive->today(),
             db          => 'storage',
             upload      => 1,
             name        => $ENV{USER},
