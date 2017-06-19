@@ -2,3 +2,7 @@
 /results
 /passwd_files/
 nhgri_storage.with_data.mysql
+MYMETA.*
+pm_to_blib
+/blib
+Makefile
