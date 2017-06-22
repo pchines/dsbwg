@@ -37,13 +37,18 @@ sub new {
             );
     my %param;
     if (@_ == 1) {
-        %param = (%defaults, %{$_[0]});
+        %param = %{$_[0]};
     }
     elsif (@_ % 2 == 0) {
-        %param = (%defaults, @_);
+        %param = @_;
     }
     else {
         croak "DSBWG::Archive:new: expect hash or hash ref";
+    }
+    while (my ($k,$v) = each %defaults) {
+        if (!defined $param{$k}) {
+            $param{$k} = $v;
+        }
     }
     my $self = bless \%param, (ref $pkg || __PACKAGE__);
     $self->{dbc} = NHGRI::Db::Connector->new(-realm => $self->{db}, -dbi_attrib => {
@@ -169,7 +174,6 @@ sub slurp_file {
     return \$data;
 }
 
-
 sub similar_ending {
     my ($self, $p1, $p2) = @_;
     my @a = File::Spec->splitdir($p1);
@@ -178,7 +182,10 @@ sub similar_ending {
 }
 
 sub read_stats {
-    my ($self, $ifile, $upload) = @_;
+    my ($self, $ifile, $ra_parts) = @_;
+    $ra_parts ||= [];
+    my %parts;
+    @parts{@$ra_parts} = (1) x @$ra_parts;
     my %stats;
     my $pre = $ifile;
     if ($pre !~ s/\.info\.txt(?:\.gz)?$//) {
@@ -187,12 +194,6 @@ sub read_stats {
     }
     $stats{files_file} = "$pre.files.txt.gz";
     $stats{dirs_file}  = "$pre.dirs.txt.gz";
-    if ($upload && !(-f $stats{files_file} && -f $stats{dirs_file})) {
-        die "Missing $stats{files_file} or $stats{dirs_file}\n"
-            . "These files must be in same directory as $ifile\n"
-            . "To proceed without uploading these files, use the"
-            . " --noupload option\n";
-    }
     my $ifh = Open($ifile);
     while (<$ifh>) {
         if (/^Pre-archive report for ([\w.-]+):(.+)/) {
@@ -206,6 +207,32 @@ sub read_stats {
         }
         elsif (/Total number of (files|dirs):\s+(\d+)/) {
             $stats{"n_$1"} = $2;
+        }
+        elsif ($parts{users} == 1 && /^Users who own/) {
+            $parts{users} = 2;
+        }
+        elsif ($parts{users} == 2) {
+            if (/^Groups (who|that) can/) {
+                $parts{groups} = 2;
+                $parts{users} = 3;
+            }
+            elsif (/^\s+(\S+)$/) {
+                push @{ $stats{users} }, $1;
+            }
+            else {
+                $parts{users} = 3;
+            }
+        }
+        elsif ($parts{groups} == 1 && /^Groups (who|that) can/) {
+            $parts{groups} = 2;
+        }
+        elsif ($parts{groups} == 2) {
+            if (/^\s+(\S+)$/) {
+                push @{ $stats{groups} }, $1;
+            }
+            else {
+                $parts{groups} = 3;
+            }
         }
     }
     my @miss = grep { !exists $stats{$_} } @RequiredStats;

@@ -48,6 +48,13 @@ process_commandline();
 my $ar = DSBWG::Archive->new(db => $Opt{db}, user => $Opt{name});
 my $req = $ar->get_archive_request($Opt{archive_id});
 my $rh_stats = $ar->read_stats($ARGV[0]);
+if ($Opt{upload}
+        && !(-f $rh_stats->{files_file} && -f $rh_stats->{dirs_file})) {
+    die "Missing $rh_stats->{files_file} or $rh_stats->{dirs_file}\n"
+        . "These files must be in same directory as $ARGV[0]\n"
+        . "To proceed without uploading these files, use the"
+        . " --noupload option (not recommended)\n";
+}
 my $rh_mods = changes_to_record($req, $rh_stats);
 $ar->update_status(%$rh_mods,
         status_from   => "new",
