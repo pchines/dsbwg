@@ -6,7 +6,7 @@ use Getopt::Long;
 use Pod::Usage;
 use File::Find;
 use File::Spec;
-our $VERSION = "0.4.0";
+our $VERSION = "0.4.1";
 our %Opt;
 our %Stats;     # counts and totals
 our %User;      # map UIDs to usernames
@@ -18,9 +18,9 @@ our %Suffix;    # subtotals for each suffix: {suffix}[files,size]
 our $SuffixRe;  # regex for suffixes to capture
 our $RecentCutoff;  # epoch time minimum for "recent" files
 our $Admin;     # boolean: indicates storage admin mode
-# TODO: update these directories with absolute paths; must end with slash
-our $ARCH_DIR = "/mnt/archive_mount/data_tier_%s/archive/";
-our $PASSWD_DIR = "/mnt/archive_mount/passwd/%s_passwd/";
+# these directories must have absolute paths; don't end with slash
+our $ARCH_DIR = "/mnt/archive_mount/data_tier_%s/archive";
+our $PASSWD_DIR = "/mnt/archive_mount/passwd/%s_passwd";
 our %LocalLookup;   # cache for Admin mode {host}{users|groups}{ID} => name
 
 our $SymLinkFh; # file for symlink output
@@ -139,6 +139,9 @@ sub check {
             $File::Find::prune = 1;
             return;
         }
+    }
+    if (!defined $_) {
+        return;
     }
     my $pre = $Opt{ignore};
     my $dir = $File::Find::dir;
