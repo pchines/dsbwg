@@ -11,7 +11,7 @@ use GTB::File qw(Open);
 use GTB::Run qw(as_number);
 
 our $EMPTY = q{};
-our @RequiredStats = qw(size n_files n_dirs);
+our @RequiredStats = qw(size n_files n_dirs files_file dirs_file users groups);
 our @Isilons = qw(bo centaur ketu spock wyvern);
 our $MAX_FILE_SIZE = 256 * 1024 * 1024; # 256Mb
 
@@ -182,10 +182,8 @@ sub similar_ending {
 }
 
 sub read_stats {
-    my ($self, $ifile, $ra_parts) = @_;
-    $ra_parts ||= [];
-    my %parts;
-    @parts{@$ra_parts} = (1) x @$ra_parts;
+    my ($self, $ifile) = @_;
+    my ($in_user, $in_grp);
     my %stats;
     my $pre = $ifile;
     if ($pre !~ s/\.info\.txt(?:\.gz)?$//) {
@@ -208,30 +206,30 @@ sub read_stats {
         elsif (/Total number of (files|dirs):\s+(\d+)/) {
             $stats{"n_$1"} = $2;
         }
-        elsif ($parts{users} == 1 && /^Users who own/) {
-            $parts{users} = 2;
+        elsif (!$in_user && /^Users who own/) {
+            $in_user = 1;
         }
-        elsif ($parts{users} == 2) {
+        elsif ($in_user == 1) {
             if (/^Groups (who|that) can/) {
-                $parts{groups} = 2;
-                $parts{users} = 3;
+                $in_grp  = 1;
+                $in_user = 2;
             }
             elsif (/^\s+(\S+)$/) {
                 push @{ $stats{users} }, $1;
             }
             else {
-                $parts{users} = 3;
+                $in_user = 3;
             }
         }
-        elsif ($parts{groups} == 1 && /^Groups (who|that) can/) {
-            $parts{groups} = 2;
+        elsif (!$in_grp && /^Groups (who|that) can/) {
+            $in_grp = 1;
         }
-        elsif ($parts{groups} == 2) {
+        elsif ($in_grp = 1) {
             if (/^\s+(\S+)$/) {
                 push @{ $stats{groups} }, $1;
             }
             else {
-                $parts{groups} = 3;
+                $in_grp = 3;
             }
         }
     }
